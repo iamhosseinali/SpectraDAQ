@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>800</width><height>600</height></rect>
+  </property>
+  <property name="windowTitle"><string>UDP FFT Monitor</string></property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <layout class="QHBoxLayout" name="inputLayout">
+      <item>
+       <widget class="QLabel" name="label_ip">
+        <property name="text"><string>DAQ IP:</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLineEdit" name="ipLineEdit">
+        <property name="toolTip">
+         <string>Press Enter after entering IP</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_port">
+        <property name="text"><string>Port:</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="portSpinBox">
+        <property name="maximum"><number>65535</number></property>
+        <property name="value"><number>2023</number></property>
+        <property name="toolTip">
+         <string>Press Enter after changing port</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_length">
+        <property name="text"><string>Packet Length:</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="packetLengthSpinBox">
+        <property name="maximum"><number>65536</number></property>
+        <property name="value"><number>2048</number></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="startButton">
+        <property name="text"><string>Start</string></property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="settingsLayout">
+      <item>
+       <widget class="QLabel" name="label_fs">
+        <property name="text"><string>Fs (Hz):</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="fsSpinBox">
+        <property name="maximum"><number>10000000</number></property>
+        <property name="minimum"><number>1</number></property>
+        <property name="value"><number>100000</number></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="setFsButton">
+        <property name="text"><string>Set Fs</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_freq">
+        <property name="text"><string>Sine Freq (Hz):</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="freqSpinBox">
+        <property name="maximum"><number>1000000</number></property>
+        <property name="minimum"><number>1</number></property>
+        <property name="value"><number>1000</number></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="setFreqButton">
+        <property name="text"><string>Set Freq</string></property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QtCharts::QChartView" name="chartView"/>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar"/>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
