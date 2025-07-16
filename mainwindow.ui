@@ -56,40 +56,6 @@
     </item>
     <item>
      <layout class="QHBoxLayout" name="settingsLayout">
-      <item>
-       <widget class="QLabel" name="label_fs">
-        <property name="text"><string>Fs (Hz):</string></property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QSpinBox" name="fsSpinBox">
-        <property name="maximum"><number>10000000</number></property>
-        <property name="minimum"><number>1</number></property>
-        <property name="value"><number>100000</number></property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="setFsButton">
-        <property name="text"><string>Set Fs</string></property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="label_freq">
-        <property name="text"><string>Sine Freq (Hz):</string></property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QSpinBox" name="freqSpinBox">
-        <property name="maximum"><number>1000000</number></property>
-        <property name="minimum"><number>1</number></property>
-        <property name="value"><number>1000</number></property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="setFreqButton">
-        <property name="text"><string>Set Freq</string></property>
-       </widget>
-      </item>
      </layout>
     </item>
     <item>

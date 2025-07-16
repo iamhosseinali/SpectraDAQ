@@ -25,8 +25,6 @@ public:
 
 private slots:
     void on_startButton_clicked();
-    void on_setFsButton_clicked();
-    void on_setFreqButton_clicked();
     void readPendingDatagrams();
     void on_ipLineEdit_editingFinished();
     void on_portSpinBox_editingFinished();

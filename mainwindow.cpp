@@ -87,10 +87,6 @@ MainWindow::MainWindow(QWidget *parent)
     axisX->setRange(0, 255);
     axisY->setRange(0, 30000);
 
-    // Default values
-    ui->fsSpinBox->setValue(100000);
-    ui->freqSpinBox->setValue(1000);
-
     connect(ui->fieldTableWidget, &QTableWidget::itemChanged,
             this, &MainWindow::on_fieldTableWidget_itemChanged);
     connect(ui->applyFftCheckBox, &QCheckBox::stateChanged, this, &MainWindow::on_applyFftCheckBox_stateChanged);
@@ -161,18 +157,6 @@ void MainWindow::sendCommand(quint8 commandId, quint32 value)
     ui->statusbar->showMessage(tr("Command %1 sent with value %2")
         .arg(commandId)
         .arg(value), 3000);
-}
-
-void MainWindow::on_setFsButton_clicked()
-{
-    quint32 fsValue = static_cast<quint32>(ui->fsSpinBox->value());
-    sendCommand(FS_COMM_IDF, fsValue);
-}
-
-void MainWindow::on_setFreqButton_clicked()
-{
-    quint32 freqValue = static_cast<quint32>(ui->freqSpinBox->value());
-    sendCommand(FRQ_COMM_IDF, freqValue);
 }
 
 void MainWindow::on_parseStructButton_clicked()
