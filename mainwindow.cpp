@@ -52,20 +52,6 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
-    // Add these widgets in your .ui file or dynamically as below:
-    ui->structTextEdit = new QTextEdit(this);
-    ui->parseStructButton = new QPushButton("Parse Struct", this);
-    ui->fieldTableWidget = new QTableWidget(this);
-
-    // Layout (if not using .ui designer)
-    QVBoxLayout *layout = new QVBoxLayout;
-    layout->addWidget(new QLabel("Paste your C struct definition here:"));
-    layout->addWidget(ui->structTextEdit);
-    layout->addWidget(ui->parseStructButton);
-    layout->addWidget(new QLabel("Parsed Fields:"));
-    layout->addWidget(ui->fieldTableWidget);
-    centralWidget()->setLayout(layout);
-
     // Connect the button
     connect(ui->parseStructButton, &QPushButton::clicked, this, &MainWindow::on_parseStructButton_clicked);
 
