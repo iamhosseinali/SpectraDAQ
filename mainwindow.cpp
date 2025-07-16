@@ -129,11 +129,29 @@ void MainWindow::on_portSpinBox_editingFinished()
 void MainWindow::on_startButton_clicked()
 {
     packetLength = ui->packetLengthSpinBox->value();
-    QByteArray startCommand = "StartLog";
-
+    QString cmdText = ui->commandLineEdit->text().trimmed();
+    QByteArray command;
+    if (ui->hexCheckBox->isChecked()) {
+        // Remove 0x if present, and spaces
+        QString hexStr = cmdText;
+        if (hexStr.startsWith("0x") || hexStr.startsWith("0X"))
+            hexStr = hexStr.mid(2);
+        hexStr = hexStr.remove(' ');
+        // Ensure even length
+        if (hexStr.length() % 2 != 0) hexStr = "0" + hexStr;
+        bool ok = true;
+        command = QByteArray::fromHex(hexStr.toUtf8());
+        if (command.isEmpty() && !hexStr.isEmpty()) ok = false;
+        if (!ok) {
+            ui->statusbar->showMessage("Invalid hex command", 3000);
+            return;
+        }
+    } else {
+        command = cmdText.toUtf8();
+    }
     if (!daqAddress.isNull()) {
-        udpSocket->writeDatagram(startCommand, daqAddress, daqPort);
-        ui->statusbar->showMessage(tr("StartLog sent to %1:%2")
+        udpSocket->writeDatagram(command, daqAddress, daqPort);
+        ui->statusbar->showMessage(tr("Command sent to %1:%2")
             .arg(daqAddress.toString())
             .arg(daqPort), 3000);
     } else {
