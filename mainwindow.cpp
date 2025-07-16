@@ -70,7 +70,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Chart setup
     QChart *chart = new QChart();
-    chart->setTitle("Real-Time FFT Output");
+    chart->setTitle("Real Time Graph");
     ui->chartView->setChart(chart);
     ui->chartView->setRenderHint(QPainter::Antialiasing);
 
