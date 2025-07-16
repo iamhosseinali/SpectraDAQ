@@ -176,13 +176,20 @@ void MainWindow::on_parseStructButton_clicked()
 
     // Display in table
     ui->fieldTableWidget->clear();
-    ui->fieldTableWidget->setColumnCount(3);
-    ui->fieldTableWidget->setHorizontalHeaderLabels({"Type", "Name", "Count"});
+    ui->fieldTableWidget->setColumnCount(4);
+    ui->fieldTableWidget->setHorizontalHeaderLabels({"Monitor", "Type", "Name", "Count"});
     ui->fieldTableWidget->setRowCount(fields.size());
     for (int i = 0; i < fields.size(); ++i) {
-        ui->fieldTableWidget->setItem(i, 0, new QTableWidgetItem(fields[i].type));
-        ui->fieldTableWidget->setItem(i, 1, new QTableWidgetItem(fields[i].name));
-        ui->fieldTableWidget->setItem(i, 2, new QTableWidgetItem(QString::number(fields[i].count)));
+        // Checkbox item
+        QTableWidgetItem *checkItem = new QTableWidgetItem();
+        checkItem->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+        checkItem->setCheckState(Qt::Unchecked);
+        ui->fieldTableWidget->setItem(i, 0, checkItem);
+
+        // Other columns
+        ui->fieldTableWidget->setItem(i, 1, new QTableWidgetItem(fields[i].type));
+        ui->fieldTableWidget->setItem(i, 2, new QTableWidgetItem(fields[i].name));
+        ui->fieldTableWidget->setItem(i, 3, new QTableWidgetItem(QString::number(fields[i].count)));
     }
     ui->fieldTableWidget->resizeColumnsToContents();
 }
