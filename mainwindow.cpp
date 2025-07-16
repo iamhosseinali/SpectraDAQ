@@ -9,11 +9,40 @@
 #include <QtCharts/QValueAxis>
 #include <limits>
 #include <QtEndian>
+#include <QRegularExpression>
 
 QT_CHARTS_USE_NAMESPACE
 
 const quint8 FS_COMM_IDF = 0x55;
 const quint8 FRQ_COMM_IDF = 0xAA;
+
+// Helper struct for parsed fields
+struct FieldDef {
+    QString type;
+    QString name;
+    int count;
+};
+
+// Simple C struct parser
+QList<FieldDef> parseCStruct(const QString &structText) {
+    QList<FieldDef> fields;
+    QStringList lines = structText.split('\n');
+    QRegularExpression re(R"((\w+_t|\w+)\s+(\w+)(\[(\d+)\])?;)");
+    for (const QString &line : lines) {
+        QString trimmed = line.trimmed();
+        if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("typedef") || trimmed.startsWith("{") || trimmed.startsWith("}"))
+            continue;
+        QRegularExpressionMatch match = re.match(trimmed);
+        if (match.hasMatch()) {
+            FieldDef field;
+            field.type = match.captured(1);
+            field.name = match.captured(2);
+            field.count = match.captured(4).isEmpty() ? 1 : match.captured(4).toInt();
+            fields.append(field);
+        }
+    }
+    return fields;
+}
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -22,6 +51,23 @@ MainWindow::MainWindow(QWidget *parent)
     , updateTimer(new QTimer(this))
 {
     ui->setupUi(this);
+
+    // Add these widgets in your .ui file or dynamically as below:
+    ui->structTextEdit = new QTextEdit(this);
+    ui->parseStructButton = new QPushButton("Parse Struct", this);
+    ui->fieldTableWidget = new QTableWidget(this);
+
+    // Layout (if not using .ui designer)
+    QVBoxLayout *layout = new QVBoxLayout;
+    layout->addWidget(new QLabel("Paste your C struct definition here:"));
+    layout->addWidget(ui->structTextEdit);
+    layout->addWidget(ui->parseStructButton);
+    layout->addWidget(new QLabel("Parsed Fields:"));
+    layout->addWidget(ui->fieldTableWidget);
+    centralWidget()->setLayout(layout);
+
+    // Connect the button
+    connect(ui->parseStructButton, &QPushButton::clicked, this, &MainWindow::on_parseStructButton_clicked);
 
     // Connect signals
     connect(ui->ipLineEdit, &QLineEdit::editingFinished,
@@ -135,6 +181,24 @@ void MainWindow::on_setFreqButton_clicked()
 {
     quint32 freqValue = static_cast<quint32>(ui->freqSpinBox->value());
     sendCommand(FRQ_COMM_IDF, freqValue);
+}
+
+void MainWindow::on_parseStructButton_clicked()
+{
+    QString structText = ui->structTextEdit->toPlainText();
+    QList<FieldDef> fields = parseCStruct(structText);
+
+    // Display in table
+    ui->fieldTableWidget->clear();
+    ui->fieldTableWidget->setColumnCount(3);
+    ui->fieldTableWidget->setHorizontalHeaderLabels({"Type", "Name", "Count"});
+    ui->fieldTableWidget->setRowCount(fields.size());
+    for (int i = 0; i < fields.size(); ++i) {
+        ui->fieldTableWidget->setItem(i, 0, new QTableWidgetItem(fields[i].type));
+        ui->fieldTableWidget->setItem(i, 1, new QTableWidgetItem(fields[i].name));
+        ui->fieldTableWidget->setItem(i, 2, new QTableWidgetItem(QString::number(fields[i].count)));
+    }
+    ui->fieldTableWidget->resizeColumnsToContents();
 }
 
 void MainWindow::readPendingDatagrams()

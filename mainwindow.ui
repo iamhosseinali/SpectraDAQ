@@ -95,6 +95,28 @@
     <item>
      <widget class="QtCharts::QChartView" name="chartView"/>
     </item>
+    <!-- Add struct input UI below chartView -->
+    <item>
+     <widget class="QLabel" name="label_structInput">
+      <property name="text"><string>Paste your C struct definition here:</string></property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QTextEdit" name="structTextEdit"/>
+    </item>
+    <item>
+     <widget class="QPushButton" name="parseStructButton">
+      <property name="text"><string>Parse Struct</string></property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="label_parsedFields">
+      <property name="text"><string>Parsed Fields:</string></property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QTableWidget" name="fieldTableWidget"/>
+    </item>
    </layout>
   </widget>
   <widget class="QMenuBar" name="menubar"/>

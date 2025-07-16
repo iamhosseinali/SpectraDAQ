@@ -28,6 +28,7 @@ private slots:
     void readPendingDatagrams();
     void on_ipLineEdit_editingFinished();
     void on_portSpinBox_editingFinished();
+    void on_parseStructButton_clicked();
 
 private:
     Ui::MainWindow *ui;
