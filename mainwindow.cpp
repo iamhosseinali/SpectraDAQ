@@ -10,6 +10,7 @@
 #include <limits>
 #include <QtEndian>
 #include <QRegularExpression>
+#include <cmath>
 
 QT_CHARTS_USE_NAMESPACE
 
@@ -92,6 +93,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(ui->fieldTableWidget, &QTableWidget::itemChanged,
             this, &MainWindow::on_fieldTableWidget_itemChanged);
+    connect(ui->applyFftCheckBox, &QCheckBox::stateChanged, this, &MainWindow::on_applyFftCheckBox_stateChanged);
+    connect(ui->fftLengthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::on_fftLengthSpinBox_valueChanged);
 }
 
 MainWindow::~MainWindow()
@@ -197,6 +200,75 @@ void MainWindow::on_parseStructButton_clicked()
     ui->fieldTableWidget->resizeColumnsToContents();
 }
 
+// Add FFT helper (Cooley-Tukey, radix-2, real input)
+std::vector<float> MainWindow::computeFft(const std::vector<float> &data) {
+    int N = data.size();
+    std::vector<std::complex<float>> X(N);
+    for (int i = 0; i < N; ++i) X[i] = data[i];
+    // Bit reversal
+    int j = 0;
+    for (int i = 0; i < N; ++i) {
+        if (i < j) std::swap(X[i], X[j]);
+        int m = N >> 1;
+        while (m >= 1 && j >= m) { j -= m; m >>= 1; }
+        j += m;
+    }
+    // FFT
+    for (int s = 1; (1 << s) <= N; ++s) {
+        int m = 1 << s;
+        std::complex<float> wm = std::exp(std::complex<float>(0, -2.0f * M_PI / m));
+        for (int k = 0; k < N; k += m) {
+            std::complex<float> w = 1;
+            for (int l = 0; l < m / 2; ++l) {
+                auto t = w * X[k + l + m / 2];
+                auto u = X[k + l];
+                X[k + l] = u + t;
+                X[k + l + m / 2] = u - t;
+                w *= wm;
+            }
+        }
+    }
+    // Return magnitude spectrum (first N/2)
+    std::vector<float> mag(N / 2);
+    for (int i = 0; i < N / 2; ++i) mag[i] = std::abs(X[i]);
+    return mag;
+}
+
+void MainWindow::on_applyFftCheckBox_stateChanged(int state) {
+    fftBuffer.clear();
+}
+void MainWindow::on_fftLengthSpinBox_valueChanged(int value) {
+    fftBuffer.clear();
+}
+
+void MainWindow::plotFftData(const std::vector<float> &fftResult) {
+    QVector<QPointF> points;
+    for (int i = 0; i < (int)fftResult.size(); ++i) {
+        points.append(QPointF(i, fftResult[i]));
+    }
+    auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
+    series->replace(points);
+    QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
+    QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
+    axisX->setRange(0, points.size() - 1);
+    float minVal = *std::min_element(fftResult.begin(), fftResult.end());
+    float maxVal = *std::max_element(fftResult.begin(), fftResult.end());
+    axisY->setRange(minVal, maxVal * 1.1f);
+}
+
+void MainWindow::plotRawData(const QByteArray &data) {
+    // fallback to original parseAndPlotData
+    parseAndPlotData(data);
+}
+
+void MainWindow::processFftAndPlot() {
+    if ((int)fftBuffer.size() == ui->fftLengthSpinBox->value()) {
+        auto fftResult = computeFft(fftBuffer);
+        plotFftData(fftResult);
+        fftBuffer.clear();
+    }
+}
+
 void MainWindow::readPendingDatagrams()
 {
     while (udpSocket->hasPendingDatagrams()) {
@@ -209,7 +281,34 @@ void MainWindow::readPendingDatagrams()
                                &sender, &senderPort);
 
         if (datagram.size() == packetLength) {
-            parseAndPlotData(datagram);
+            // Find selected field index
+            int selectedField = -1;
+            for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
+                QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
+                if (item && item->checkState() == Qt::Checked) {
+                    selectedField = row;
+                    break;
+                }
+            }
+            bool fftEnabled = ui->applyFftCheckBox->isChecked();
+            int fftLen = ui->fftLengthSpinBox->value();
+            if (fftEnabled && selectedField >= 0) {
+                // Assume each field is int32_t, contiguous, as in parseAndPlotData
+                const int32_t* samples = reinterpret_cast<const int32_t*>(datagram.constData());
+                int sampleCount = datagram.size() / sizeof(int32_t);
+                // If struct has multiple fields, select the right one
+                // For now, assume each field is 1 int32_t (can be extended for arrays)
+                if (selectedField < sampleCount) {
+                    float value = static_cast<float>(samples[selectedField]) / 65536.0f;
+                    fftBuffer.push_back(value);
+                    if ((int)fftBuffer.size() >= fftLen) {
+                        fftBuffer.resize(fftLen);
+                        processFftAndPlot();
+                    }
+                }
+            } else {
+                plotRawData(datagram);
+            }
         }
         else if (datagram.size() == 1) {
             quint8 ack = static_cast<quint8>(datagram[0]);
