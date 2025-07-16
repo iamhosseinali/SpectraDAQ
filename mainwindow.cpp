@@ -89,6 +89,9 @@ MainWindow::MainWindow(QWidget *parent)
     // Default values
     ui->fsSpinBox->setValue(100000);
     ui->freqSpinBox->setValue(1000);
+
+    connect(ui->fieldTableWidget, &QTableWidget::itemChanged,
+            this, &MainWindow::on_fieldTableWidget_itemChanged);
 }
 
 MainWindow::~MainWindow()
@@ -177,7 +180,7 @@ void MainWindow::on_parseStructButton_clicked()
     // Display in table
     ui->fieldTableWidget->clear();
     ui->fieldTableWidget->setColumnCount(4);
-    ui->fieldTableWidget->setHorizontalHeaderLabels({"Monitor", "Type", "Name", "Count"});
+    ui->fieldTableWidget->setHorizontalHeaderLabels({"Real Time Graph", "Type", "Name", "Count"});
     ui->fieldTableWidget->setRowCount(fields.size());
     for (int i = 0; i < fields.size(); ++i) {
         // Checkbox item
@@ -259,4 +262,20 @@ void MainWindow::parseAndPlotData(const QByteArray &data)
 
     axisX->setRange(0, sampleCount - 1);
     axisY->setRange(minVal, maxVal);
+}
+
+void MainWindow::on_fieldTableWidget_itemChanged(QTableWidgetItem *item)
+{
+    if (item->column() == 0 && item->checkState() == Qt::Checked) {
+        ui->fieldTableWidget->blockSignals(true);
+        for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
+            if (row != item->row()) {
+                QTableWidgetItem *otherItem = ui->fieldTableWidget->item(row, 0);
+                if (otherItem && otherItem->checkState() == Qt::Checked) {
+                    otherItem->setCheckState(Qt::Unchecked);
+                }
+            }
+        }
+        ui->fieldTableWidget->blockSignals(false);
+    }
 }
