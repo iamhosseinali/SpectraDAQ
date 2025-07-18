@@ -120,6 +120,10 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::on_fieldTableWidget_itemChanged);
     connect(ui->applyFftCheckBox, &QCheckBox::stateChanged, this, &MainWindow::on_applyFftCheckBox_stateChanged);
     connect(ui->fftLengthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::on_fftLengthSpinBox_valueChanged);
+
+    // Add buffer for time series
+    valueHistory.clear();
+    maxHistory = 256;
 }
 
 MainWindow::~MainWindow()
@@ -220,10 +224,12 @@ void MainWindow::on_parseStructButton_clicked()
         return 0; // Unknown type
     };
 
-    // Calculate struct size
+    // Print parsed fields and sizes
+    qDebug() << "Parsed struct fields:";
     int structSize = 0;
     for (const FieldDef &field : fields) {
         int sz = typeSize(field.type);
+        qDebug() << field.type << field.name << "count:" << field.count << "size:" << sz * field.count;
         if (sz == 0) continue; // skip unknown types
         structSize += sz * field.count;
     }
@@ -309,11 +315,6 @@ void MainWindow::plotFftData(const std::vector<float> &fftResult) {
     axisY->setRange(minVal, maxVal * 1.1f);
 }
 
-void MainWindow::plotRawData(const QByteArray &data) {
-    // fallback to original parseAndPlotData
-    parseAndPlotData(data);
-}
-
 void MainWindow::processFftAndPlot() {
     if ((int)fftBuffer.size() == ui->fftLengthSpinBox->value()) {
         auto fftResult = computeFft(fftBuffer);
@@ -324,17 +325,22 @@ void MainWindow::processFftAndPlot() {
 
 void MainWindow::readPendingDatagrams()
 {
+    static QList<FieldDef> lastParsedFields;
+    // Clear cache if struct changed
+    static QString lastStructText;
+    QString currentStructText = ui->structTextEdit->toPlainText();
+    if (currentStructText != lastStructText) {
+        lastParsedFields = parseCStruct(currentStructText);
+        lastStructText = currentStructText;
+    }
     while (udpSocket->hasPendingDatagrams()) {
         QByteArray datagram;
         datagram.resize(int(udpSocket->pendingDatagramSize()));
         QHostAddress sender;
         quint16 senderPort;
-
-        udpSocket->readDatagram(datagram.data(), datagram.size(),
-                               &sender, &senderPort);
-
+        udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+        qDebug() << "Received datagram of size" << datagram.size();
         if (datagram.size() == packetLength) {
-            // Find selected field index
             int selectedField = -1;
             int selectedArrayIndex = 0;
             int selectedFieldCount = 1;
@@ -351,29 +357,82 @@ void MainWindow::readPendingDatagrams()
             }
             bool fftEnabled = ui->applyFftCheckBox->isChecked();
             int fftLen = ui->fftLengthSpinBox->value();
-            if (fftEnabled && selectedField >= 0) {
-                // Assume each field is int32_t, contiguous, as in parseAndPlotData
-                const int32_t* samples = reinterpret_cast<const int32_t*>(datagram.constData());
-                int sampleCount = datagram.size() / sizeof(int32_t);
-                // For array fields, select the right element
-                int fieldOffset = 0;
-                for (int row = 0; row < selectedField; ++row) {
-                    fieldOffset += ui->fieldTableWidget->item(row, 3)->text().toInt();
+            if (selectedField >= 0) {
+                auto typeSize = [](const QString &type) -> int {
+                    if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
+                    if (type == "int16_t" || type == "uint16_t") return 2;
+                    if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+                    if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+                    return 0;
+                };
+                int offset = 0;
+                for (int i = 0; i < selectedField; ++i) {
+                    offset += typeSize(ui->fieldTableWidget->item(i, 1)->text()) * ui->fieldTableWidget->item(i, 3)->text().toInt();
                 }
-                int index = fieldOffset;
+                QString type = ui->fieldTableWidget->item(selectedField, 1)->text();
+                int typeSz = typeSize(type);
                 if (selectedFieldCount > 1) {
-                    index += selectedArrayIndex;
+                    offset += selectedArrayIndex * typeSz;
                 }
-                if (index < sampleCount) {
-                    float value = static_cast<float>(samples[index]) / 65536.0f;
+                float value = 0.0f;
+                if (offset + typeSz <= datagram.size()) {
+                    const char* ptr = datagram.constData() + offset;
+                    if (type == "int16_t") {
+                        value = static_cast<float>(*reinterpret_cast<const int16_t*>(ptr));
+                    } else if (type == "uint16_t") {
+                        value = static_cast<float>(*reinterpret_cast<const uint16_t*>(ptr));
+                    } else if (type == "int32_t") {
+                        value = static_cast<float>(*reinterpret_cast<const int32_t*>(ptr));
+                    } else if (type == "uint32_t") {
+                        value = static_cast<float>(*reinterpret_cast<const uint32_t*>(ptr));
+                    } else if (type == "float") {
+                        value = *reinterpret_cast<const float*>(ptr);
+                    } else if (type == "int64_t") {
+                        value = static_cast<float>(*reinterpret_cast<const int64_t*>(ptr));
+                    } else if (type == "uint64_t") {
+                        value = static_cast<float>(*reinterpret_cast<const uint64_t*>(ptr));
+                    } else if (type == "double") {
+                        value = static_cast<float>(*reinterpret_cast<const double*>(ptr));
+                    } else if (type == "int8_t") {
+                        value = static_cast<float>(*reinterpret_cast<const int8_t*>(ptr));
+                    } else if (type == "uint8_t" || type == "char") {
+                        value = static_cast<float>(*reinterpret_cast<const uint8_t*>(ptr));
+                    }
+                }
+                // Only divide by 65536 for int32_t/uint32_t
+                if (type == "int32_t" || type == "uint32_t") {
+                    value /= 65536.0f;
+                }
+                qDebug() << "Field offset:" << offset << "type:" << type << "value:" << value;
+                if (fftEnabled) {
                     fftBuffer.push_back(value);
                     if ((int)fftBuffer.size() >= fftLen) {
                         fftBuffer.resize(fftLen);
                         processFftAndPlot();
                     }
+                } else {
+                    // Append to time series buffer
+                    if (valueHistory.size() >= maxHistory) valueHistory.pop_front();
+                    valueHistory.append(QPointF(valueHistory.size(), value));
+                    // Re-index X for rolling window
+                    for (int i = 0; i < valueHistory.size(); ++i) valueHistory[i].setX(i);
+                    auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
+                    series->replace(valueHistory);
+                    QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
+                    QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
+                    axisX->setRange(0, maxHistory-1);
+                    float minVal = std::numeric_limits<float>::max();
+                    float maxVal = std::numeric_limits<float>::lowest();
+                    for (const auto& pt : valueHistory) {
+                        if (pt.y() < minVal) minVal = pt.y();
+                        if (pt.y() > maxVal) maxVal = pt.y();
+                    }
+                    if (minVal == maxVal) {
+                        minVal -= 1.0f;
+                        maxVal += 1.0f;
+                    }
+                    axisY->setRange(minVal, maxVal);
                 }
-            } else {
-                plotRawData(datagram);
             }
         }
         else if (datagram.size() == 1) {
@@ -386,47 +445,6 @@ void MainWindow::readPendingDatagrams()
             }
         }
     }
-}
-
-void MainWindow::parseAndPlotData(const QByteArray &data)
-{
-    QVector<QPointF> points;
-    const int32_t* samples = reinterpret_cast<const int32_t*>(data.constData());
-    int sampleCount = data.size() / sizeof(int32_t);
-
-    float minVal = std::numeric_limits<float>::max();
-    float maxVal = std::numeric_limits<float>::lowest();
-    bool significantValuesFound = false;
-
-    for (int i = 0; i < sampleCount; ++i) {
-        float value = static_cast<float>(samples[i]) / 65536.0f;
-
-        if(i > 0) {
-            if(value < minVal) minVal = value;
-            if(value > maxVal) maxVal = value;
-            if(value > 0.1f) significantValuesFound = true;
-        }
-
-        points.append(QPointF(i, value));
-    }
-
-    if(!significantValuesFound) {
-        minVal = 0;
-        maxVal = 1.0f;
-    } else {
-        float range = maxVal - minVal;
-        minVal = qMax(0.0f, minVal - range * 0.1f);
-        maxVal *= 1.1f;
-    }
-
-    auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
-    series->replace(points);
-
-    QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
-    QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
-
-    axisX->setRange(0, sampleCount - 1);
-    axisY->setRange(minVal, maxVal);
 }
 
 void MainWindow::on_fieldTableWidget_itemChanged(QTableWidgetItem *item)

@@ -53,6 +53,10 @@ private:
     void initializeSocket();
     void parseAndPlotData(const QByteArray &data);
     void sendCommand(quint8 commandId, quint32 value);
+
+    // Time series buffer for plotting
+    QVector<QPointF> valueHistory;
+    int maxHistory = 256;
 };
 
 #endif // MAINWINDOW_H
