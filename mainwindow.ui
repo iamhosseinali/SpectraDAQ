@@ -113,6 +113,23 @@
     <item>
      <widget class="QTableWidget" name="fieldTableWidget"/>
     </item>
+    <item>
+     <layout class="QHBoxLayout" name="arrayIndexLayout">
+      <item>
+       <widget class="QLabel" name="label_arrayIndex">
+        <property name="text"><string>Array Index:</string></property>
+        <property name="visible"><bool>false</bool></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="arrayIndexSpinBox">
+        <property name="minimum"><number>0</number></property>
+        <property name="maximum"><number>0</number></property>
+        <property name="visible"><bool>false</bool></property>
+       </widget>
+      </item>
+     </layout>
+    </item>
     <!-- Add FFT controls below the table -->
     <item>
      <layout class="QHBoxLayout" name="fftControlsLayout">

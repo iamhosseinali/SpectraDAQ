@@ -336,12 +336,18 @@ void MainWindow::readPendingDatagrams()
         if (datagram.size() == packetLength) {
             // Find selected field index
             int selectedField = -1;
+            int selectedArrayIndex = 0;
+            int selectedFieldCount = 1;
             for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
                 QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
                 if (item && item->checkState() == Qt::Checked) {
                     selectedField = row;
+                    selectedFieldCount = ui->fieldTableWidget->item(row, 3)->text().toInt();
                     break;
                 }
+            }
+            if (selectedField >= 0 && selectedFieldCount > 1) {
+                selectedArrayIndex = ui->arrayIndexSpinBox->value();
             }
             bool fftEnabled = ui->applyFftCheckBox->isChecked();
             int fftLen = ui->fftLengthSpinBox->value();
@@ -349,10 +355,17 @@ void MainWindow::readPendingDatagrams()
                 // Assume each field is int32_t, contiguous, as in parseAndPlotData
                 const int32_t* samples = reinterpret_cast<const int32_t*>(datagram.constData());
                 int sampleCount = datagram.size() / sizeof(int32_t);
-                // If struct has multiple fields, select the right one
-                // For now, assume each field is 1 int32_t (can be extended for arrays)
-                if (selectedField < sampleCount) {
-                    float value = static_cast<float>(samples[selectedField]) / 65536.0f;
+                // For array fields, select the right element
+                int fieldOffset = 0;
+                for (int row = 0; row < selectedField; ++row) {
+                    fieldOffset += ui->fieldTableWidget->item(row, 3)->text().toInt();
+                }
+                int index = fieldOffset;
+                if (selectedFieldCount > 1) {
+                    index += selectedArrayIndex;
+                }
+                if (index < sampleCount) {
+                    float value = static_cast<float>(samples[index]) / 65536.0f;
                     fftBuffer.push_back(value);
                     if ((int)fftBuffer.size() >= fftLen) {
                         fftBuffer.resize(fftLen);
@@ -429,5 +442,19 @@ void MainWindow::on_fieldTableWidget_itemChanged(QTableWidgetItem *item)
             }
         }
         ui->fieldTableWidget->blockSignals(false);
+
+        // Show/hide array index spinbox if selected field is an array
+        int selectedRow = item->row();
+        QString type = ui->fieldTableWidget->item(selectedRow, 1)->text();
+        int count = ui->fieldTableWidget->item(selectedRow, 3)->text().toInt();
+        if (count > 1) {
+            ui->label_arrayIndex->setVisible(true);
+            ui->arrayIndexSpinBox->setVisible(true);
+            ui->arrayIndexSpinBox->setMinimum(0);
+            ui->arrayIndexSpinBox->setMaximum(count - 1);
+        } else {
+            ui->label_arrayIndex->setVisible(false);
+            ui->arrayIndexSpinBox->setVisible(false);
+        }
     }
 }
