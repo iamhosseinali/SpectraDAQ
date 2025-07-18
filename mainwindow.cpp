@@ -182,6 +182,26 @@ void MainWindow::on_parseStructButton_clicked()
     QString structText = ui->structTextEdit->toPlainText();
     QList<FieldDef> fields = parseCStruct(structText);
 
+    // Helper: map type string to size in bytes
+    auto typeSize = [](const QString &type) -> int {
+        if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
+        if (type == "int16_t" || type == "uint16_t") return 2;
+        if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+        if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+        return 0; // Unknown type
+    };
+
+    // Calculate total size
+    int totalSize = 0;
+    for (const FieldDef &field : fields) {
+        int sz = typeSize(field.type);
+        if (sz == 0) continue; // skip unknown types
+        totalSize += sz * field.count;
+    }
+    if (totalSize > 0) {
+        ui->packetLengthSpinBox->setValue(totalSize);
+    }
+
     // Display in table
     ui->fieldTableWidget->clear();
     ui->fieldTableWidget->setColumnCount(4);
