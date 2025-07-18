@@ -55,6 +55,32 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Allow large values for structCountSpinBox
     ui->structCountSpinBox->setMaximum(65536);
+    ui->packetLengthSpinBox->setReadOnly(true);
+
+    // Connect structCountSpinBox to update packet length when changed
+    connect(ui->structCountSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int){
+        // Recalculate packet length as if struct was just parsed
+        QString structText = ui->structTextEdit->toPlainText();
+        QList<FieldDef> fields = parseCStruct(structText);
+        auto typeSize = [](const QString &type) -> int {
+            if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
+            if (type == "int16_t" || type == "uint16_t") return 2;
+            if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+            if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+            return 0;
+        };
+        int structSize = 0;
+        for (const FieldDef &field : fields) {
+            int sz = typeSize(field.type);
+            if (sz == 0) continue;
+            structSize += sz * field.count;
+        }
+        int structCount = ui->structCountSpinBox->value();
+        int totalSize = structSize * structCount;
+        if (totalSize > 0) {
+            ui->packetLengthSpinBox->setValue(totalSize);
+        }
+    });
 
     // Connect the button
     connect(ui->parseStructButton, &QPushButton::clicked, this, &MainWindow::on_parseStructButton_clicked);
@@ -194,13 +220,15 @@ void MainWindow::on_parseStructButton_clicked()
         return 0; // Unknown type
     };
 
-    // Calculate total size
-    int totalSize = 0;
+    // Calculate struct size
+    int structSize = 0;
     for (const FieldDef &field : fields) {
         int sz = typeSize(field.type);
         if (sz == 0) continue; // skip unknown types
-        totalSize += sz * field.count;
+        structSize += sz * field.count;
     }
+    int structCount = ui->structCountSpinBox->value();
+    int totalSize = structSize * structCount;
     if (totalSize > 0) {
         ui->packetLengthSpinBox->setValue(totalSize);
     }
