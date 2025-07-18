@@ -86,6 +86,21 @@
      <widget class="QTextEdit" name="structTextEdit"/>
     </item>
     <item>
+     <layout class="QHBoxLayout" name="structCountLayout">
+      <item>
+       <widget class="QLabel" name="label_structCount">
+        <property name="text"><string>Structs per packet:</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="structCountSpinBox">
+        <property name="minimum"><number>1</number></property>
+        <property name="value"><number>1</number></property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
      <widget class="QPushButton" name="parseStructButton">
       <property name="text"><string>Parse Struct</string></property>
      </widget>
