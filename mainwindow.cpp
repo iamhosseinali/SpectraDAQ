@@ -53,6 +53,9 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
+    // Allow large values for structCountSpinBox
+    ui->structCountSpinBox->setMaximum(65536);
+
     // Connect the button
     connect(ui->parseStructButton, &QPushButton::clicked, this, &MainWindow::on_parseStructButton_clicked);
 
