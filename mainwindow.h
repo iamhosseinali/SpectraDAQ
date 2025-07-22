@@ -57,6 +57,10 @@ private:
     // Time series buffer for plotting
     QVector<QPointF> valueHistory;
     int maxHistory = 256;
+
+    // Add for oscilloscope-style axis scaling
+    int xDiv = 256; // default time window (samples)
+    int yDiv = 30000; // default y range
 };
 
 #endif // MAINWINDOW_H

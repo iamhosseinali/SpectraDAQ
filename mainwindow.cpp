@@ -124,6 +124,30 @@ MainWindow::MainWindow(QWidget *parent)
     // Add buffer for time series
     valueHistory.clear();
     maxHistory = 256;
+
+    // Set up sliders
+    ui->xDivSlider->setMinimum(10);
+    ui->xDivSlider->setMaximum(1000);
+    ui->xDivSlider->setValue(256);
+
+    ui->yDivSlider->setMinimum(10);
+    ui->yDivSlider->setMaximum(100000);
+    ui->yDivSlider->setValue(30000);
+
+    // Connect sliders to slots
+    connect(ui->xDivSlider, &QSlider::valueChanged, this, [this](int value){
+        xDiv = value;
+        maxHistory = xDiv;
+        // Update X axis immediately
+        QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
+        if (axisX) axisX->setRange(0, xDiv - 1);
+    });
+    connect(ui->yDivSlider, &QSlider::valueChanged, this, [this](int value){
+        yDiv = value;
+        // Update Y axis immediately
+        QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
+        if (axisY) axisY->setRange(0, yDiv);
+    });
 }
 
 MainWindow::~MainWindow()
@@ -408,7 +432,7 @@ void MainWindow::readPendingDatagrams()
                     }
                 } else {
                     // Append to time series buffer
-                    if (valueHistory.size() >= maxHistory) valueHistory.pop_front();
+                    if (valueHistory.size() >= xDiv) valueHistory.pop_front();
                     valueHistory.append(QPointF(valueHistory.size(), value));
                     // Re-index X for rolling window
                     for (int i = 0; i < valueHistory.size(); ++i) valueHistory[i].setX(i);
@@ -416,18 +440,8 @@ void MainWindow::readPendingDatagrams()
                     series->replace(valueHistory);
                     QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
                     QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
-                    axisX->setRange(0, maxHistory-1);
-                    float minVal = std::numeric_limits<float>::max();
-                    float maxVal = std::numeric_limits<float>::lowest();
-                    for (const auto& pt : valueHistory) {
-                        if (pt.y() < minVal) minVal = pt.y();
-                        if (pt.y() > maxVal) maxVal = pt.y();
-                    }
-                    if (minVal == maxVal) {
-                        minVal -= 1.0f;
-                        maxVal += 1.0f;
-                    }
-                    axisY->setRange(minVal, maxVal);
+                    if (axisX) axisX->setRange(0, xDiv - 1);
+                    if (axisY) axisY->setRange(0, yDiv);
                 }
             }
         }

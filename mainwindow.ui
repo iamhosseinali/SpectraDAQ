@@ -59,6 +59,52 @@
     </item>
     <item>
      <layout class="QHBoxLayout" name="settingsLayout">
+      <item>
+       <widget class="QLabel" name="label_xDiv">
+        <property name="text">
+         <string>X-Div</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSlider" name="xDivSlider">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="minimum">
+         <number>10</number>
+        </property>
+        <property name="maximum">
+         <number>1000</number>
+        </property>
+        <property name="value">
+         <number>256</number>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_yDiv">
+        <property name="text">
+         <string>Y-Div</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSlider" name="yDivSlider">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="minimum">
+         <number>10</number>
+        </property>
+        <property name="maximum">
+         <number>100000</number>
+        </property>
+        <property name="value">
+         <number>30000</number>
+        </property>
+       </widget>
+      </item>
      </layout>
     </item>
     <item>
