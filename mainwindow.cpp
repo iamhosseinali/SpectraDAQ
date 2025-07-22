@@ -399,10 +399,6 @@ void MainWindow::readPendingDatagrams()
                         value = static_cast<float>(*reinterpret_cast<const uint8_t*>(ptr));
                     }
                 }
-                // Only divide by 65536 for int32_t/uint32_t
-                if (type == "int32_t" || type == "uint32_t") {
-                    value /= 65536.0f;
-                }
                 qDebug() << "Field offset:" << offset << "type:" << type << "value:" << value;
                 if (fftEnabled) {
                     fftBuffer.push_back(value);
