@@ -136,7 +136,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Set up sliders
     ui->xDivSlider->setMinimum(10);
-    ui->xDivSlider->setMaximum(1000);
+    ui->xDivSlider->setMaximum(100000);
     ui->xDivSlider->setValue(256);
 
     ui->yDivSlider->setMinimum(10);
@@ -479,7 +479,16 @@ void MainWindow::readPendingDatagrams()
                     // Re-index X for rolling window
                     for (int i = 0; i < valueHistory.size(); ++i) valueHistory[i].setX(i);
                     auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
-                    series->replace(valueHistory);
+                    // Efficient update: append/remove instead of replace
+                    if (series->count() == valueHistory.size() - 1) {
+                        // Remove oldest point if buffer is full
+                        if (series->count() > 0) series->remove(0);
+                        // Append new point
+                        series->append(valueHistory.last());
+                    } else {
+                        // Fallback: full replace if sizes mismatch (e.g., after X-Div change)
+                        series->replace(valueHistory);
+                    }
                     if (ui->debugLogCheckBox->isChecked()) qDebug() << "Plotting time series, valueHistory size:" << valueHistory.size();
                     if (ui->debugLogCheckBox->isChecked() && !valueHistory.isEmpty()) {
                         qDebug() << "First point:" << valueHistory.first() << "Last point:" << valueHistory.last();
