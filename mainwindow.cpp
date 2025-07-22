@@ -46,6 +46,21 @@ QList<FieldDef> parseCStruct(const QString &structText) {
     return fields;
 }
 
+// Helper to swap endianness for various types
+#include <algorithm>
+template<typename T>
+T swapEndian(T u) {
+    static_assert (CHAR_BIT == 8, "CHAR_BIT != 8");
+    union {
+        T u;
+        unsigned char u8[sizeof(T)];
+    } source, dest;
+    source.u = u;
+    for (size_t k = 0; k < sizeof(T); k++)
+        dest.u8[k] = source.u8[sizeof(T) - k - 1];
+    return dest.u;
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -448,22 +463,39 @@ void MainWindow::readPendingDatagrams()
                 float value = 0.0f;
                 if (offset + typeSz <= datagram.size()) {
                     const char* ptr = datagram.constData() + offset;
+                    bool swap = ui->endiannessCheckBox->isChecked();
                     if (type == "int16_t") {
-                        value = static_cast<float>(*reinterpret_cast<const int16_t*>(ptr));
+                        int16_t v = *reinterpret_cast<const int16_t*>(ptr);
+                        if (swap) v = swapEndian(v);
+                        value = static_cast<float>(v);
                     } else if (type == "uint16_t") {
-                        value = static_cast<float>(*reinterpret_cast<const uint16_t*>(ptr));
+                        uint16_t v = *reinterpret_cast<const uint16_t*>(ptr);
+                        if (swap) v = swapEndian(v);
+                        value = static_cast<float>(v);
                     } else if (type == "int32_t") {
-                        value = static_cast<float>(*reinterpret_cast<const int32_t*>(ptr));
+                        int32_t v = *reinterpret_cast<const int32_t*>(ptr);
+                        if (swap) v = swapEndian(v);
+                        value = static_cast<float>(v);
                     } else if (type == "uint32_t") {
-                        value = static_cast<float>(*reinterpret_cast<const uint32_t*>(ptr));
+                        uint32_t v = *reinterpret_cast<const uint32_t*>(ptr);
+                        if (swap) v = swapEndian(v);
+                        value = static_cast<float>(v);
                     } else if (type == "float") {
-                        value = *reinterpret_cast<const float*>(ptr);
+                        float v = *reinterpret_cast<const float*>(ptr);
+                        if (swap) v = swapEndian(v);
+                        value = v;
                     } else if (type == "int64_t") {
-                        value = static_cast<float>(*reinterpret_cast<const int64_t*>(ptr));
+                        int64_t v = *reinterpret_cast<const int64_t*>(ptr);
+                        if (swap) v = swapEndian(v);
+                        value = static_cast<float>(v);
                     } else if (type == "uint64_t") {
-                        value = static_cast<float>(*reinterpret_cast<const uint64_t*>(ptr));
+                        uint64_t v = *reinterpret_cast<const uint64_t*>(ptr);
+                        if (swap) v = swapEndian(v);
+                        value = static_cast<float>(v);
                     } else if (type == "double") {
-                        value = static_cast<float>(*reinterpret_cast<const double*>(ptr));
+                        double v = *reinterpret_cast<const double*>(ptr);
+                        if (swap) v = swapEndian(v);
+                        value = static_cast<float>(v);
                     } else if (type == "int8_t") {
                         value = static_cast<float>(*reinterpret_cast<const int8_t*>(ptr));
                     } else if (type == "uint8_t" || type == "char") {

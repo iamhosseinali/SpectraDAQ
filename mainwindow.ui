@@ -208,6 +208,11 @@
       </item>
      </layout>
     </item>
+    <item>
+     <widget class="QCheckBox" name="endiannessCheckBox">
+      <property name="text"><string>Change Endianness</string></property>
+     </widget>
+    </item>
     <!-- Add FFT controls below the table -->
     <item>
      <layout class="QHBoxLayout" name="fftControlsLayout">
