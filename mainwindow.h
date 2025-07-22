@@ -33,6 +33,7 @@ private slots:
     // Optionally, slot for FFT controls
     void on_applyFftCheckBox_stateChanged(int state);
     void on_fftLengthSpinBox_valueChanged(int value);
+    void updatePlot();
 
 private:
     Ui::MainWindow *ui;
@@ -64,6 +65,7 @@ private:
 
     // Timer for throttling auto Y-scaling
     QTimer* autoScaleYTimer;
+    QTimer* plotUpdateTimer; // Timer for throttling plot updates
 };
 
 #endif // MAINWINDOW_H

@@ -52,6 +52,7 @@ MainWindow::MainWindow(QWidget *parent)
     , udpSocket(new QUdpSocket(this))
     , updateTimer(new QTimer(this))
     , autoScaleYTimer(new QTimer(this))
+    , plotUpdateTimer(new QTimer(this))
 {
     ui->setupUi(this);
     // Set stretch factors for main layout: chartView gets most space
@@ -136,7 +137,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Set up sliders
     ui->xDivSlider->setMinimum(10);
-    ui->xDivSlider->setMaximum(100000);
+    ui->xDivSlider->setMaximum(10000); // Limit X-Div to 10000
     ui->xDivSlider->setValue(256);
 
     ui->yDivSlider->setMinimum(10);
@@ -184,6 +185,11 @@ MainWindow::MainWindow(QWidget *parent)
             if (axisY) axisY->setRange(0, yDiv);
         }
     });
+
+    // Throttle plot updates: update every 30ms
+    plotUpdateTimer->setInterval(30);
+    connect(plotUpdateTimer, &QTimer::timeout, this, &MainWindow::updatePlot);
+    plotUpdateTimer->start();
 }
 
 MainWindow::~MainWindow()
@@ -478,28 +484,7 @@ void MainWindow::readPendingDatagrams()
                     if (ui->debugLogCheckBox->isChecked()) qDebug() << "Appending value to history:" << value;
                     // Re-index X for rolling window
                     for (int i = 0; i < valueHistory.size(); ++i) valueHistory[i].setX(i);
-                    auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
-                    // Efficient update: append/remove instead of replace
-                    if (series->count() == valueHistory.size() - 1) {
-                        // Remove oldest point if buffer is full
-                        if (series->count() > 0) series->remove(0);
-                        // Append new point
-                        series->append(valueHistory.last());
-                    } else {
-                        // Fallback: full replace if sizes mismatch (e.g., after X-Div change)
-                        series->replace(valueHistory);
-                    }
-                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "Plotting time series, valueHistory size:" << valueHistory.size();
-                    if (ui->debugLogCheckBox->isChecked() && !valueHistory.isEmpty()) {
-                        qDebug() << "First point:" << valueHistory.first() << "Last point:" << valueHistory.last();
-                    }
-                    QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
-                    QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
-                    if (axisX) axisX->setRange(0, xDiv - 1);
-                    // Y axis: only update here if not auto-scaling
-                    if (axisY && !ui->autoScaleYCheckBox->isChecked()) {
-                        axisY->setRange(0, yDiv);
-                    }
+                    // Plotting is now handled by updatePlot()
                 }
             }
         }
@@ -542,5 +527,27 @@ void MainWindow::on_fieldTableWidget_itemChanged(QTableWidgetItem *item)
             ui->label_arrayIndex->setVisible(false);
             ui->arrayIndexSpinBox->setVisible(false);
         }
+    }
+}
+
+// Throttled plot update
+void MainWindow::updatePlot() {
+    auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
+    if (valueHistory.isEmpty()) return;
+    if (series->count() == valueHistory.size() - 1) {
+        // Remove oldest point if buffer is full
+        if (series->count() > 0) series->remove(0);
+        // Append new point
+        series->append(valueHistory.last());
+    } else {
+        // Fallback: full replace if sizes mismatch (e.g., after X-Div change)
+        series->replace(valueHistory);
+    }
+    QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
+    QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
+    if (axisX) axisX->setRange(0, xDiv - 1);
+    // Y axis: only update here if not auto-scaling
+    if (axisY && !ui->autoScaleYCheckBox->isChecked()) {
+        axisY->setRange(0, yDiv);
     }
 }
