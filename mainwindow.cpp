@@ -104,6 +104,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->chartView->setRenderHint(QPainter::Antialiasing);
 
     QLineSeries *series = new QLineSeries();
+    series->setColor(Qt::red); // Add this line
     chart->addSeries(series);
 
     QValueAxis *axisX = new QValueAxis();
@@ -363,14 +364,18 @@ void MainWindow::readPendingDatagrams()
         QHostAddress sender;
         quint16 senderPort;
         udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
-        qDebug() << "Received datagram of size" << datagram.size();
+        if (ui->debugLogCheckBox->isChecked()) qDebug() << "Received datagram of size" << datagram.size();
         if (datagram.size() == packetLength) {
             int selectedField = -1;
             int selectedArrayIndex = 0;
             int selectedFieldCount = 1;
             for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
                 QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
-                if (item && item->checkState() == Qt::Checked) {
+                if (!item) {
+                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "TableWidget item is null at row" << row;
+                    continue;
+                }
+                if (item->checkState() == Qt::Checked) {
                     selectedField = row;
                     selectedFieldCount = ui->fieldTableWidget->item(row, 3)->text().toInt();
                     break;
@@ -423,7 +428,7 @@ void MainWindow::readPendingDatagrams()
                         value = static_cast<float>(*reinterpret_cast<const uint8_t*>(ptr));
                     }
                 }
-                qDebug() << "Field offset:" << offset << "type:" << type << "value:" << value;
+                if (ui->debugLogCheckBox->isChecked()) qDebug() << "Field offset:" << offset << "type:" << type << "value:" << value;
                 if (fftEnabled) {
                     fftBuffer.push_back(value);
                     if ((int)fftBuffer.size() >= fftLen) {
@@ -434,14 +439,36 @@ void MainWindow::readPendingDatagrams()
                     // Append to time series buffer
                     if (valueHistory.size() >= xDiv) valueHistory.pop_front();
                     valueHistory.append(QPointF(valueHistory.size(), value));
+                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "Appending value to history:" << value;
                     // Re-index X for rolling window
                     for (int i = 0; i < valueHistory.size(); ++i) valueHistory[i].setX(i);
                     auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
                     series->replace(valueHistory);
+                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "Plotting time series, valueHistory size:" << valueHistory.size();
+                    if (ui->debugLogCheckBox->isChecked() && !valueHistory.isEmpty()) {
+                        qDebug() << "First point:" << valueHistory.first() << "Last point:" << valueHistory.last();
+                    }
                     QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
                     QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
                     if (axisX) axisX->setRange(0, xDiv - 1);
-                    if (axisY) axisY->setRange(0, yDiv);
+                    // Auto-scaling: controlled by checkbox
+                    if (axisY) {
+                        if (ui->autoScaleYCheckBox->isChecked()) {
+                            float minVal = std::numeric_limits<float>::max();
+                            float maxVal = std::numeric_limits<float>::lowest();
+                            for (const auto& pt : valueHistory) {
+                                if (pt.y() < minVal) minVal = pt.y();
+                                if (pt.y() > maxVal) maxVal = pt.y();
+                            }
+                            if (minVal == maxVal) {
+                                minVal -= 1.0f;
+                                maxVal += 1.0f;
+                            }
+                            axisY->setRange(minVal, maxVal);
+                        } else {
+                            axisY->setRange(0, yDiv);
+                        }
+                    }
                 }
             }
         }

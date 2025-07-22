@@ -105,10 +105,31 @@
         </property>
        </widget>
       </item>
+      <item>
+       <widget class="QCheckBox" name="autoScaleYCheckBox">
+        <property name="text">
+         <string>Auto Y-Scale</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="debugLogCheckBox">
+        <property name="text">
+         <string>Enable Debug Log</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </item>
     <item>
-     <widget class="QtCharts::QChartView" name="chartView"/>
+     <widget class="QtCharts::QChartView" name="chartView">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
+     </widget>
     </item>
     <!-- Add struct input UI below chartView -->
     <item>
