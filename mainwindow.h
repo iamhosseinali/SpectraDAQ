@@ -66,6 +66,10 @@ private:
     // Timer for throttling auto Y-scaling
     QTimer* autoScaleYTimer;
     QTimer* plotUpdateTimer; // Timer for throttling plot updates
+
+    qint64 sampleIndex = 0; // Track sample index for X axis
+
+    int getStructSize();
 };
 
 #endif // MAINWINDOW_H

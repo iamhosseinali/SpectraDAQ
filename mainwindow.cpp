@@ -139,7 +139,7 @@ MainWindow::MainWindow(QWidget *parent)
     series->attachAxis(axisY);
 
     axisX->setRange(0, 255);
-    axisY->setRange(0, 30000);
+    axisY->setRange(-150, 150); // Better for ±128 values
 
     connect(ui->fieldTableWidget, &QTableWidget::itemChanged,
             this, &MainWindow::on_fieldTableWidget_itemChanged);
@@ -405,6 +405,26 @@ void MainWindow::processFftAndPlot() {
     }
 }
 
+// Helper: calculate struct size from parsed struct
+int MainWindow::getStructSize() {
+    QString structText = ui->structTextEdit->toPlainText();
+    QList<FieldDef> fields = parseCStruct(structText);
+    auto typeSize = [](const QString &type) -> int {
+        if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
+        if (type == "int16_t" || type == "uint16_t") return 2;
+        if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+        if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+        return 0;
+    };
+    int structSize = 0;
+    for (const FieldDef &field : fields) {
+        int sz = typeSize(field.type);
+        if (sz == 0) continue;
+        structSize += sz * field.count;
+    }
+    return structSize;
+}
+
 void MainWindow::readPendingDatagrams()
 {
     static QList<FieldDef> lastParsedFields;
@@ -422,7 +442,8 @@ void MainWindow::readPendingDatagrams()
         quint16 senderPort;
         udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
         if (ui->debugLogCheckBox->isChecked()) qDebug() << "Received datagram of size" << datagram.size();
-        if (datagram.size() == packetLength) {
+        int structSize = getStructSize();
+        if (datagram.size() > 0 && structSize > 0) {
             int selectedField = -1;
             int selectedArrayIndex = 0;
             int selectedFieldCount = 1;
@@ -444,6 +465,7 @@ void MainWindow::readPendingDatagrams()
             bool fftEnabled = ui->applyFftCheckBox->isChecked();
             int fftLen = ui->fftLengthSpinBox->value();
             if (selectedField >= 0) {
+                // Calculate field offset within struct as before
                 auto typeSize = [](const QString &type) -> int {
                     if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
                     if (type == "int16_t" || type == "uint16_t") return 2;
@@ -451,72 +473,90 @@ void MainWindow::readPendingDatagrams()
                     if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
                     return 0;
                 };
-                int offset = 0;
+                auto typeAlignment = [](const QString &type) -> int {
+                    if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+                    if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+                    if (type == "int16_t" || type == "uint16_t") return 2;
+                    return 1;
+                };
+                int fieldOffset = 0;
                 for (int i = 0; i < selectedField; ++i) {
-                    offset += typeSize(ui->fieldTableWidget->item(i, 1)->text()) * ui->fieldTableWidget->item(i, 3)->text().toInt();
+                    QString fieldType = ui->fieldTableWidget->item(i, 1)->text();
+                    int fieldCount = ui->fieldTableWidget->item(i, 3)->text().toInt();
+                    int sz = typeSize(fieldType);
+                    int align = typeAlignment(fieldType);
+                    int padding = (align - (fieldOffset % align)) % align;
+                    fieldOffset += padding;
+                    fieldOffset += sz * fieldCount;
                 }
                 QString type = ui->fieldTableWidget->item(selectedField, 1)->text();
                 int typeSz = typeSize(type);
+                int fieldAlign = typeAlignment(type);
+                int fieldPadding = (fieldAlign - (fieldOffset % fieldAlign)) % fieldAlign;
+                fieldOffset += fieldPadding;
                 if (selectedFieldCount > 1) {
-                    offset += selectedArrayIndex * typeSz;
+                    fieldOffset += selectedArrayIndex * typeSz;
                 }
-                float value = 0.0f;
-                if (offset + typeSz <= datagram.size()) {
-                    const char* ptr = datagram.constData() + offset;
-                    bool swap = ui->endiannessCheckBox->isChecked();
-                    if (type == "int16_t") {
-                        int16_t v = *reinterpret_cast<const int16_t*>(ptr);
-                        if (swap) v = swapEndian(v);
-                        value = static_cast<float>(v);
-                    } else if (type == "uint16_t") {
-                        uint16_t v = *reinterpret_cast<const uint16_t*>(ptr);
-                        if (swap) v = swapEndian(v);
-                        value = static_cast<float>(v);
-                    } else if (type == "int32_t") {
-                        int32_t v = *reinterpret_cast<const int32_t*>(ptr);
-                        if (swap) v = swapEndian(v);
-                        value = static_cast<float>(v);
-                    } else if (type == "uint32_t") {
-                        uint32_t v = *reinterpret_cast<const uint32_t*>(ptr);
-                        if (swap) v = swapEndian(v);
-                        value = static_cast<float>(v);
-                    } else if (type == "float") {
-                        float v = *reinterpret_cast<const float*>(ptr);
-                        if (swap) v = swapEndian(v);
-                        value = v;
-                    } else if (type == "int64_t") {
-                        int64_t v = *reinterpret_cast<const int64_t*>(ptr);
-                        if (swap) v = swapEndian(v);
-                        value = static_cast<float>(v);
-                    } else if (type == "uint64_t") {
-                        uint64_t v = *reinterpret_cast<const uint64_t*>(ptr);
-                        if (swap) v = swapEndian(v);
-                        value = static_cast<float>(v);
-                    } else if (type == "double") {
-                        double v = *reinterpret_cast<const double*>(ptr);
-                        if (swap) v = swapEndian(v);
-                        value = static_cast<float>(v);
-                    } else if (type == "int8_t") {
-                        value = static_cast<float>(*reinterpret_cast<const int8_t*>(ptr));
-                    } else if (type == "uint8_t" || type == "char") {
-                        value = static_cast<float>(*reinterpret_cast<const uint8_t*>(ptr));
+                int numStructs = datagram.size() / structSize;
+                for (int structIdx = 0; structIdx < numStructs; ++structIdx) {
+                    int offset = structIdx * structSize + fieldOffset;
+                    float value = 0.0f;
+                    if (offset + typeSz <= datagram.size()) {
+                        const char* ptr = datagram.constData() + offset;
+                        bool swap = ui->endiannessCheckBox->isChecked();
+                        if (type == "int16_t") {
+                            int16_t v = *reinterpret_cast<const int16_t*>(ptr);
+                            if (swap) v = swapEndian(v);
+                            value = static_cast<float>(v);
+                        } else if (type == "uint16_t") {
+                            uint16_t v = *reinterpret_cast<const uint16_t*>(ptr);
+                            if (swap) v = swapEndian(v);
+                            value = static_cast<float>(v);
+                        } else if (type == "int32_t") {
+                            int32_t v = *reinterpret_cast<const int32_t*>(ptr);
+                            if (swap) v = swapEndian(v);
+                            value = static_cast<float>(v);
+                        } else if (type == "uint32_t") {
+                            uint32_t v = *reinterpret_cast<const uint32_t*>(ptr);
+                            if (swap) v = swapEndian(v);
+                            value = static_cast<float>(v);
+                        } else if (type == "float") {
+                            float v = *reinterpret_cast<const float*>(ptr);
+                            if (swap) v = swapEndian(v);
+                            value = v;
+                        } else if (type == "int64_t") {
+                            int64_t v = *reinterpret_cast<const int64_t*>(ptr);
+                            if (swap) v = swapEndian(v);
+                            value = static_cast<float>(v);
+                        } else if (type == "uint64_t") {
+                            uint64_t v = *reinterpret_cast<const uint64_t*>(ptr);
+                            if (swap) v = swapEndian(v);
+                            value = static_cast<float>(v);
+                        } else if (type == "double") {
+                            double v = *reinterpret_cast<const double*>(ptr);
+                            if (swap) v = swapEndian(v);
+                            value = static_cast<float>(v);
+                        } else if (type == "int8_t") {
+                            value = static_cast<float>(*reinterpret_cast<const int8_t*>(ptr));
+                        } else if (type == "uint8_t" || type == "char") {
+                            value = static_cast<float>(*reinterpret_cast<const uint8_t*>(ptr));
+                        }
                     }
-                }
-                if (ui->debugLogCheckBox->isChecked()) qDebug() << "Field offset:" << offset << "type:" << type << "value:" << value;
-                if (fftEnabled) {
-                    fftBuffer.push_back(value);
-                    if ((int)fftBuffer.size() >= fftLen) {
-                        fftBuffer.resize(fftLen);
-                        processFftAndPlot();
+                    if (ui->debugLogCheckBox->isChecked()) {
+                        qDebug() << "Struct:" << structIdx << "Offset:" << offset << "Value:" << value << "Sample Index:" << sampleIndex;
                     }
-                } else {
-                    // Append to time series buffer
-                    if (valueHistory.size() >= xDiv) valueHistory.pop_front();
-                    valueHistory.append(QPointF(valueHistory.size(), value));
-                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "Appending value to history:" << value;
-                    // Re-index X for rolling window
-                    for (int i = 0; i < valueHistory.size(); ++i) valueHistory[i].setX(i);
-                    // Plotting is now handled by updatePlot()
+                    if (fftEnabled) {
+                        fftBuffer.push_back(value);
+                        if ((int)fftBuffer.size() >= fftLen) {
+                            fftBuffer.resize(fftLen);
+                            processFftAndPlot();
+                        }
+                    } else {
+                        if (valueHistory.size() >= xDiv) valueHistory.pop_front();
+                        valueHistory.append(QPointF(sampleIndex++, value));
+                        // No need to reindex X, as sampleIndex is always increasing
+                        // Plotting is now handled by updatePlot()
+                    }
                 }
             }
         }
@@ -559,6 +599,9 @@ void MainWindow::on_fieldTableWidget_itemChanged(QTableWidgetItem *item)
             ui->label_arrayIndex->setVisible(false);
             ui->arrayIndexSpinBox->setVisible(false);
         }
+        // Reset sample index and value history when changing field
+        sampleIndex = 0;
+        valueHistory.clear();
     }
 }
 
@@ -566,20 +609,17 @@ void MainWindow::on_fieldTableWidget_itemChanged(QTableWidgetItem *item)
 void MainWindow::updatePlot() {
     auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
     if (valueHistory.isEmpty()) return;
-    if (series->count() == valueHistory.size() - 1) {
-        // Remove oldest point if buffer is full
-        if (series->count() > 0) series->remove(0);
-        // Append new point
-        series->append(valueHistory.last());
-    } else {
-        // Fallback: full replace if sizes mismatch (e.g., after X-Div change)
-        series->replace(valueHistory);
-    }
+    series->replace(valueHistory);
     QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
+    if (axisX) {
+        // Show last xDiv points
+        double minX = std::max(0.0, valueHistory.last().x() - xDiv + 1);
+        double maxX = valueHistory.last().x();
+        axisX->setRange(minX, maxX);
+    }
     QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
-    if (axisX) axisX->setRange(0, xDiv - 1);
     // Y axis: only update here if not auto-scaling
     if (axisY && !ui->autoScaleYCheckBox->isChecked()) {
-        axisY->setRange(0, yDiv);
+        axisY->setRange(-yDiv, yDiv);
     }
 }
