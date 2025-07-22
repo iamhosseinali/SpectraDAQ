@@ -11,6 +11,7 @@
 #include <QtEndian>
 #include <QRegularExpression>
 #include <cmath>
+#include <algorithm> // For std::minmax_element
 
 QT_CHARTS_USE_NAMESPACE
 
@@ -50,6 +51,7 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
     , udpSocket(new QUdpSocket(this))
     , updateTimer(new QTimer(this))
+    , autoScaleYTimer(new QTimer(this))
 {
     ui->setupUi(this);
 
@@ -149,11 +151,39 @@ MainWindow::MainWindow(QWidget *parent)
         QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
         if (axisY) axisY->setRange(0, yDiv);
     });
+
+    // Throttle auto Y-scaling: update every 100ms
+    autoScaleYTimer->setInterval(100);
+    connect(autoScaleYTimer, &QTimer::timeout, this, [this]() {
+        if (ui->autoScaleYCheckBox->isChecked() && !valueHistory.isEmpty()) {
+            QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
+            auto minmax = std::minmax_element(valueHistory.begin(), valueHistory.end(),
+                [](const QPointF& a, const QPointF& b) { return a.y() < b.y(); });
+            float minVal = minmax.first->y();
+            float maxVal = minmax.second->y();
+            if (minVal == maxVal) {
+                minVal -= 1.0f;
+                maxVal += 1.0f;
+            }
+            if (axisY) axisY->setRange(minVal, maxVal);
+        }
+    });
+    connect(ui->autoScaleYCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked) {
+            autoScaleYTimer->start();
+        } else {
+            autoScaleYTimer->stop();
+            // Set Y axis to manual value immediately
+            QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
+            if (axisY) axisY->setRange(0, yDiv);
+        }
+    });
 }
 
 MainWindow::~MainWindow()
 {
     delete ui;
+    autoScaleYTimer->stop();
 }
 
 void MainWindow::initializeSocket()
@@ -451,23 +481,9 @@ void MainWindow::readPendingDatagrams()
                     QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
                     QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
                     if (axisX) axisX->setRange(0, xDiv - 1);
-                    // Auto-scaling: controlled by checkbox
-                    if (axisY) {
-                        if (ui->autoScaleYCheckBox->isChecked()) {
-                            float minVal = std::numeric_limits<float>::max();
-                            float maxVal = std::numeric_limits<float>::lowest();
-                            for (const auto& pt : valueHistory) {
-                                if (pt.y() < minVal) minVal = pt.y();
-                                if (pt.y() > maxVal) maxVal = pt.y();
-                            }
-                            if (minVal == maxVal) {
-                                minVal -= 1.0f;
-                                maxVal += 1.0f;
-                            }
-                            axisY->setRange(minVal, maxVal);
-                        } else {
-                            axisY->setRange(0, yDiv);
-                        }
+                    // Y axis: only update here if not auto-scaling
+                    if (axisY && !ui->autoScaleYCheckBox->isChecked()) {
+                        axisY->setRange(0, yDiv);
                     }
                 }
             }
