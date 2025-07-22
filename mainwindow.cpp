@@ -54,6 +54,12 @@ MainWindow::MainWindow(QWidget *parent)
     , autoScaleYTimer(new QTimer(this))
 {
     ui->setupUi(this);
+    // Set stretch factors for main layout: chartView gets most space
+    ui->verticalLayout->setStretch(0, 5); // chartView
+    ui->verticalLayout->setStretch(1, 0); // inputLayout
+    ui->verticalLayout->setStretch(2, 0); // settingsLayout
+    ui->verticalLayout->setStretch(3, 0); // structTextEdit
+    ui->verticalLayout->setStretch(4, 0); // fieldTableWidget
 
     // Allow large values for structCountSpinBox
     ui->structCountSpinBox->setMaximum(65536);

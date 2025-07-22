@@ -9,6 +9,19 @@
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayout">
     <item>
+     <widget class="QtCharts::QChartView" name="chartView">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
+      <property name="minimumHeight">
+       <number>400</number>
+      </property>
+     </widget>
+    </item>
+    <item>
      <layout class="QHBoxLayout" name="inputLayout">
       <item>
        <widget class="QLabel" name="label_ip">
@@ -121,16 +134,6 @@
       </item>
      </layout>
     </item>
-    <item>
-     <widget class="QtCharts::QChartView" name="chartView">
-      <property name="sizePolicy">
-       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-        <horstretch>0</horstretch>
-        <verstretch>0</verstretch>
-       </sizepolicy>
-      </property>
-     </widget>
-    </item>
     <!-- Add struct input UI below chartView -->
     <item>
      <widget class="QLabel" name="label_structInput">
@@ -138,7 +141,11 @@
      </widget>
     </item>
     <item>
-     <widget class="QTextEdit" name="structTextEdit"/>
+     <widget class="QTextEdit" name="structTextEdit">
+      <property name="maximumHeight">
+       <number>60</number>
+      </property>
+     </widget>
     </item>
     <item>
      <layout class="QHBoxLayout" name="structCountAndPacketLengthLayout">
@@ -178,7 +185,11 @@
      </widget>
     </item>
     <item>
-     <widget class="QTableWidget" name="fieldTableWidget"/>
+     <widget class="QTableWidget" name="fieldTableWidget">
+      <property name="maximumHeight">
+       <number>80</number>
+      </property>
+     </widget>
     </item>
     <item>
      <layout class="QHBoxLayout" name="arrayIndexLayout">
