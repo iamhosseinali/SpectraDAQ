@@ -132,6 +132,27 @@
         </property>
        </widget>
       </item>
+      <!-- Add refresh rate control -->
+      <item>
+       <widget class="QLabel" name="label_refreshRate">
+        <property name="text">
+         <string>Graph Refresh Rate (Hz):</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="refreshRateSpinBox">
+        <property name="minimum">
+         <number>1</number>
+        </property>
+        <property name="maximum">
+         <number>120</number>
+        </property>
+        <property name="value">
+         <number>33</number>
+        </property>
+       </widget>
+      </item>
      </layout>
     </item>
     <!-- Add struct input UI below chartView -->

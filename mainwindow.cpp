@@ -202,9 +202,15 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     // Throttle plot updates: update every 30ms
-    plotUpdateTimer->setInterval(30);
+    int refreshHz = ui->refreshRateSpinBox->value();
+    int refreshInterval = 1000 / std::max(1, refreshHz);
+    plotUpdateTimer->setInterval(refreshInterval);
     connect(plotUpdateTimer, &QTimer::timeout, this, &MainWindow::updatePlot);
     plotUpdateTimer->start();
+    connect(ui->refreshRateSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int hz){
+        int interval = 1000 / std::max(1, hz);
+        plotUpdateTimer->setInterval(interval);
+    });
 }
 
 MainWindow::~MainWindow()
