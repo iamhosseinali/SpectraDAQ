@@ -383,9 +383,60 @@ std::vector<float> MainWindow::computeFft(const std::vector<float> &data) {
 
 void MainWindow::on_applyFftCheckBox_stateChanged(int state) {
     fftBuffer.clear();
+    
+    if (state == Qt::Checked) {
+        // Clear time-domain data
+        valueHistory.clear();
+        sampleIndex = 0;
+        
+        // Reset chart for FFT display
+        auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
+        series->clear();
+        
+        // Configure axes for FFT
+        QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
+        QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
+        
+        if (axisX) {
+            axisX->setTitleText("Frequency Bin");
+            axisX->setRange(0, ui->fftLengthSpinBox->value()/2 - 1);
+        }
+        
+        if (axisY) {
+            axisY->setTitleText("Magnitude");
+            axisY->setLabelFormat("%.1e");  // Scientific notation
+        }
+    } else {
+        // Reset to time-domain configuration
+        ui->chartView->chart()->setTitle("Real Time Graph");
+        
+        QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
+        if (axisX) {
+            axisX->setTitleText("Samples");
+            axisX->setRange(0, xDiv - 1);
+        }
+        
+        QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
+        if (axisY) {
+            axisY->setTitleText("Value");
+            axisY->setLabelFormat("%.2f");  // Float format
+            axisY->setRange(-yDiv, yDiv);
+        }
+    }
 }
 void MainWindow::on_fftLengthSpinBox_valueChanged(int value) {
     fftBuffer.clear();
+    
+    if (ui->applyFftCheckBox->isChecked()) {
+        // Reset FFT display
+        auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
+        series->clear();
+        
+        QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
+        if (axisX) {
+            axisX->setRange(0, value/2 - 1);
+        }
+    }
 }
 
 void MainWindow::plotFftData(const std::vector<float> &fftResult) {
@@ -393,14 +444,32 @@ void MainWindow::plotFftData(const std::vector<float> &fftResult) {
     for (int i = 0; i < (int)fftResult.size(); ++i) {
         points.append(QPointF(i, fftResult[i]));
     }
+    
     auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
     series->replace(points);
+    
     QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
     QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
-    axisX->setRange(0, points.size() - 1);
-    float minVal = *std::min_element(fftResult.begin(), fftResult.end());
-    float maxVal = *std::max_element(fftResult.begin(), fftResult.end());
-    axisY->setRange(minVal, maxVal * 1.1f);
+    
+    if (axisX) {
+        axisX->setTitleText("Frequency Bin");
+        axisX->setRange(0, points.size() - 1);
+    }
+    
+    if (axisY) {
+        axisY->setTitleText("Magnitude");
+        float minVal = *std::min_element(fftResult.begin(), fftResult.end());
+        float maxVal = *std::max_element(fftResult.begin(), fftResult.end());
+        
+        // Add 10% headroom for better visualization
+        axisY->setRange(minVal, maxVal * 1.1);
+        
+        // Always use logarithmic scale for FFT
+        axisY->setLabelFormat("%.1e");
+    }
+    
+    // Set chart title for FFT mode
+    ui->chartView->chart()->setTitle("FFT Magnitude Spectrum");
 }
 
 void MainWindow::processFftAndPlot() {
@@ -613,18 +682,25 @@ void MainWindow::on_fieldTableWidget_itemChanged(QTableWidgetItem *item)
 
 // Throttled plot update
 void MainWindow::updatePlot() {
+    if (ui->applyFftCheckBox->isChecked()) {
+        // FFT mode - do nothing (handled by processFftAndPlot)
+        return;
+    }
+
+    // Time-domain mode
     auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
     if (valueHistory.isEmpty()) return;
+    
     series->replace(valueHistory);
+    
     QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
     if (axisX) {
-        // Show last xDiv points
         double minX = std::max(0.0, valueHistory.last().x() - xDiv + 1);
         double maxX = valueHistory.last().x();
         axisX->setRange(minX, maxX);
     }
+    
     QValueAxis* axisY = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Vertical).first());
-    // Y axis: only update here if not auto-scaling
     if (axisY && !ui->autoScaleYCheckBox->isChecked()) {
         axisY->setRange(-yDiv, yDiv);
     }
