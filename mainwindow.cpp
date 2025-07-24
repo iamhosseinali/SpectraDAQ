@@ -144,7 +144,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->fieldTableWidget, &QTableWidget::itemChanged,
             this, &MainWindow::on_fieldTableWidget_itemChanged);
     connect(ui->applyFftCheckBox, &QCheckBox::stateChanged, this, &MainWindow::on_applyFftCheckBox_stateChanged);
-    connect(ui->fftLengthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::on_fftLengthSpinBox_valueChanged);
+    // Disconnect valueChanged, connect editingFinished for FFT Length
+    connect(ui->fftLengthSpinBox, &QSpinBox::editingFinished, this, &MainWindow::on_fftLengthSpinBox_editingFinished);
     // Set initial enabled state for FFT Length spin box
     ui->fftLengthSpinBox->setEnabled(!ui->applyFftCheckBox->isChecked());
 
@@ -428,14 +429,25 @@ void MainWindow::on_applyFftCheckBox_stateChanged(int state) {
         }
     }
 }
-void MainWindow::on_fftLengthSpinBox_valueChanged(int value) {
+// Add new slot for editingFinished
+void MainWindow::on_fftLengthSpinBox_editingFinished() {
+    int value = ui->fftLengthSpinBox->value();
+    // Snap to nearest power of 2 if not already
+    int pow2 = 1;
+    while (pow2 < value) pow2 <<= 1;
+    int lower = pow2 >> 1;
+    int nearest = (value - lower < pow2 - value) ? lower : pow2;
+    if (value != nearest && nearest >= ui->fftLengthSpinBox->minimum() && nearest <= ui->fftLengthSpinBox->maximum()) {
+        ui->fftLengthSpinBox->blockSignals(true);
+        ui->fftLengthSpinBox->setValue(nearest);
+        ui->fftLengthSpinBox->blockSignals(false);
+        value = nearest;
+    }
     fftBuffer.clear();
-    
     if (ui->applyFftCheckBox->isChecked()) {
         // Reset FFT display
         auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
         series->clear();
-        
         QValueAxis* axisX = qobject_cast<QValueAxis*>(ui->chartView->chart()->axes(Qt::Horizontal).first());
         if (axisX) {
             axisX->setRange(0, value/2 - 1);

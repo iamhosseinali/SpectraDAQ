@@ -32,7 +32,7 @@ private slots:
     void on_fieldTableWidget_itemChanged(QTableWidgetItem *item);
     // Optionally, slot for FFT controls
     void on_applyFftCheckBox_stateChanged(int state);
-    void on_fftLengthSpinBox_valueChanged(int value);
+    void on_fftLengthSpinBox_editingFinished();
     void updatePlot();
 
 private:
