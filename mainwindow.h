@@ -10,6 +10,7 @@
 #include <QtCharts>
 #include <vector>
 #include <complex>
+#include <QJsonObject>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -34,6 +35,10 @@ private slots:
     void on_applyFftCheckBox_stateChanged(int state);
     void on_fftLengthSpinBox_editingFinished();
     void updatePlot();
+    void on_savePresetButton_clicked();
+    void on_loadPresetButton_clicked();
+    void on_deletePresetButton_clicked();
+    void on_presetComboBox_currentIndexChanged(int index);
 
 private:
     Ui::MainWindow *ui;
@@ -70,6 +75,13 @@ private:
     qint64 sampleIndex = 0; // Track sample index for X axis
 
     int getStructSize();
+
+    void savePresetToFile(const QString &name);
+    void loadPresetFromFile(const QString &name);
+    void deletePresetFromFile(const QString &name);
+    void updatePresetComboBox();
+    QJsonObject collectPreset() const;
+    void applyPreset(const QJsonObject &preset);
 };
 
 #endif // MAINWINDOW_H

@@ -12,6 +12,11 @@
 #include <QRegularExpression>
 #include <cmath>
 #include <algorithm> // For std::minmax_element
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QFile>
+#include <QInputDialog>
 
 QT_CHARTS_USE_NAMESPACE
 
@@ -214,6 +219,8 @@ MainWindow::MainWindow(QWidget *parent)
         int interval = 1000 / std::max(1, hz);
         plotUpdateTimer->setInterval(interval);
     });
+
+    updatePresetComboBox();
 }
 
 MainWindow::~MainWindow()
@@ -720,4 +727,171 @@ void MainWindow::updatePlot() {
     if (axisY && !ui->autoScaleYCheckBox->isChecked()) {
         axisY->setRange(-yDiv, yDiv);
     }
+}
+
+// Helper: collect all UI state into a QJsonObject
+QJsonObject MainWindow::collectPreset() const {
+    QJsonObject preset;
+    preset["daq_ip"] = ui->ipLineEdit->text();
+    preset["daq_port"] = ui->portSpinBox->value();
+    preset["struct_def"] = ui->structTextEdit->toPlainText();
+    preset["fft_length"] = ui->fftLengthSpinBox->value();
+    preset["apply_fft"] = ui->applyFftCheckBox->isChecked();
+    preset["x_div"] = ui->xDivSlider->value();
+    preset["y_div"] = ui->yDivSlider->value();
+    preset["refresh_rate"] = ui->refreshRateSpinBox->value();
+    preset["endianness"] = ui->endiannessCheckBox->isChecked();
+    preset["debug_log"] = ui->debugLogCheckBox->isChecked();
+    preset["auto_scale_y"] = ui->autoScaleYCheckBox->isChecked();
+    preset["selected_field"] = ui->fieldTableWidget->currentRow();
+    preset["array_index"] = ui->arrayIndexSpinBox->value();
+    preset["structs_per_packet"] = ui->structCountSpinBox->value();
+    return preset;
+}
+
+// Helper: apply a QJsonObject preset to the UI
+void MainWindow::applyPreset(const QJsonObject &preset) {
+    if (preset.contains("daq_ip")) ui->ipLineEdit->setText(preset["daq_ip"].toString());
+    if (preset.contains("daq_port")) ui->portSpinBox->setValue(preset["daq_port"].toInt());
+    if (preset.contains("struct_def")) ui->structTextEdit->setPlainText(preset["struct_def"].toString());
+    if (preset.contains("fft_length")) ui->fftLengthSpinBox->setValue(preset["fft_length"].toInt());
+    if (preset.contains("apply_fft")) ui->applyFftCheckBox->setChecked(preset["apply_fft"].toBool());
+    if (preset.contains("x_div")) ui->xDivSlider->setValue(preset["x_div"].toInt());
+    if (preset.contains("y_div")) ui->yDivSlider->setValue(preset["y_div"].toInt());
+    if (preset.contains("refresh_rate")) ui->refreshRateSpinBox->setValue(preset["refresh_rate"].toInt());
+    if (preset.contains("endianness")) ui->endiannessCheckBox->setChecked(preset["endianness"].toBool());
+    if (preset.contains("debug_log")) ui->debugLogCheckBox->setChecked(preset["debug_log"].toBool());
+    if (preset.contains("auto_scale_y")) ui->autoScaleYCheckBox->setChecked(preset["auto_scale_y"].toBool());
+    if (preset.contains("selected_field")) {
+        int row = preset["selected_field"].toInt();
+        if (row >= 0 && row < ui->fieldTableWidget->rowCount()) {
+            ui->fieldTableWidget->setCurrentCell(row, 0);
+            QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
+            if (item) item->setCheckState(Qt::Checked);
+        }
+    }
+    if (preset.contains("array_index")) ui->arrayIndexSpinBox->setValue(preset["array_index"].toInt());
+    if (preset.contains("structs_per_packet")) ui->structCountSpinBox->setValue(preset["structs_per_packet"].toInt());
+}
+
+// Helper: update the preset combo box from file
+void MainWindow::updatePresetComboBox() {
+    QFile file("presets.json");
+    if (!file.open(QIODevice::ReadOnly)) {
+        ui->presetComboBox->clear();
+        return;
+    }
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    QJsonObject root = doc.object();
+    QJsonArray presets = root["presets"].toArray();
+    ui->presetComboBox->blockSignals(true);
+    ui->presetComboBox->clear();
+    for (const QJsonValue &val : presets) {
+        QJsonObject obj = val.toObject();
+        ui->presetComboBox->addItem(obj["name"].toString());
+    }
+    ui->presetComboBox->blockSignals(false);
+}
+
+// Save preset to file
+void MainWindow::savePresetToFile(const QString &name) {
+    QFile file("presets.json");
+    QJsonDocument doc;
+    QJsonObject root;
+    QJsonArray presets;
+    if (file.open(QIODevice::ReadOnly)) {
+        doc = QJsonDocument::fromJson(file.readAll());
+        root = doc.object();
+        presets = root["presets"].toArray();
+        file.close();
+    }
+    // Overwrite if exists
+    for (int i = 0; i < presets.size(); ++i) {
+        if (presets[i].toObject()["name"].toString() == name) {
+            presets.removeAt(i);
+            break;
+        }
+    }
+    QJsonObject preset = collectPreset();
+    preset["name"] = name;
+    presets.append(preset);
+    root["presets"] = presets;
+    doc.setObject(root);
+    file.setFileName("presets.json");
+    file.open(QIODevice::WriteOnly);
+    file.write(doc.toJson());
+    file.close();
+    updatePresetComboBox();
+}
+
+// Load preset from file
+void MainWindow::loadPresetFromFile(const QString &name) {
+    QFile file("presets.json");
+    if (!file.open(QIODevice::ReadOnly)) return;
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    QJsonObject root = doc.object();
+    QJsonArray presets = root["presets"].toArray();
+    for (const QJsonValue &val : presets) {
+        QJsonObject obj = val.toObject();
+        if (obj["name"].toString() == name) {
+            // Parse struct before applying preset fields
+            if (obj.contains("struct_def")) {
+                ui->structTextEdit->setPlainText(obj["struct_def"].toString());
+                on_parseStructButton_clicked();
+            }
+            applyPreset(obj);
+            break;
+        }
+    }
+}
+
+// Delete preset from file
+void MainWindow::deletePresetFromFile(const QString &name) {
+    QFile file("presets.json");
+    if (!file.open(QIODevice::ReadOnly)) return;
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    QJsonObject root = doc.object();
+    QJsonArray presets = root["presets"].toArray();
+    for (int i = 0; i < presets.size(); ++i) {
+        if (presets[i].toObject()["name"].toString() == name) {
+            presets.removeAt(i);
+            break;
+        }
+    }
+    root["presets"] = presets;
+    doc.setObject(root);
+    file.setFileName("presets.json");
+    file.open(QIODevice::WriteOnly);
+    file.write(doc.toJson());
+    file.close();
+    updatePresetComboBox();
+}
+
+// UI slots
+void MainWindow::on_savePresetButton_clicked() {
+    bool ok = false;
+    QString name = QInputDialog::getText(this, "Save Preset", "Preset name:", QLineEdit::Normal, "", &ok);
+    if (ok && !name.trimmed().isEmpty()) {
+        savePresetToFile(name.trimmed());
+    }
+}
+void MainWindow::on_loadPresetButton_clicked() {
+    QString name = ui->presetComboBox->currentText();
+    if (!name.isEmpty()) {
+        loadPresetFromFile(name);
+    }
+}
+void MainWindow::on_deletePresetButton_clicked() {
+    QString name = ui->presetComboBox->currentText();
+    if (!name.isEmpty()) {
+        deletePresetFromFile(name);
+    }
+}
+void MainWindow::on_presetComboBox_currentIndexChanged(int index) {
+    // Optionally auto-load preset on selection
+    // QString name = ui->presetComboBox->itemText(index);
+    // if (!name.isEmpty()) loadPresetFromFile(name);
 }

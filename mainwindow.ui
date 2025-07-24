@@ -269,6 +269,32 @@
       </item>
      </layout>
     </item>
+    <item>
+     <layout class="QHBoxLayout" name="presetLayout">
+      <item>
+       <widget class="QComboBox" name="presetComboBox">
+        <property name="toolTip">
+         <string>Select a saved preset</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="savePresetButton">
+        <property name="text"><string>Save Preset</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="loadPresetButton">
+        <property name="text"><string>Load Preset</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="deletePresetButton">
+        <property name="text"><string>Delete Preset</string></property>
+       </widget>
+      </item>
+     </layout>
+    </item>
    </layout>
   </widget>
   <widget class="QMenuBar" name="menubar"/>
