@@ -1,6 +1,6 @@
 QT       += core gui widgets charts network
 
-TARGET = FFT_Monitor
+TARGET = SpectraDAQ
 TEMPLATE = app
 
 DEFINES += QT_DEPRECATED_WARNINGS
