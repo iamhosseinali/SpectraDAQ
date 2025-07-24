@@ -26,7 +26,6 @@ public:
     ~MainWindow();
 
 private slots:
-    void on_startButton_clicked();
     void readPendingDatagrams();
     void on_ipLineEdit_editingFinished();
     void on_portSpinBox_editingFinished();

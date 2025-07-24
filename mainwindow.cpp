@@ -267,49 +267,6 @@ void MainWindow::on_portSpinBox_editingFinished()
     initializeSocket();
 }
 
-void MainWindow::on_startButton_clicked()
-{
-    // Always update daqPort and daqAddress from UI before sending
-    daqPort = static_cast<quint16>(ui->portSpinBox->value());
-    daqAddress = QHostAddress(ui->ipLineEdit->text());
-    packetLength = ui->packetLengthSpinBox->value();
-    QString cmdText = ui->commandLineEdit->text().trimmed();
-    QByteArray command;
-    if (ui->hexCheckBox->isChecked()) {
-        // Remove 0x if present, and spaces
-        QString hexStr = cmdText;
-        if (hexStr.startsWith("0x") || hexStr.startsWith("0X"))
-            hexStr = hexStr.mid(2);
-        hexStr = hexStr.remove(' ');
-        // Ensure even length
-        if (hexStr.length() % 2 != 0) hexStr = "0" + hexStr;
-        bool ok = true;
-        command = QByteArray::fromHex(hexStr.toUtf8());
-        if (command.isEmpty() && !hexStr.isEmpty()) ok = false;
-        if (!ok) {
-            ui->statusbar->showMessage("Invalid hex command", 3000);
-            return;
-        }
-    } else {
-        command = cmdText.toUtf8();
-    }
-    if (!daqAddress.isNull()) {
-        qDebug() << "daqAddress:" << daqAddress << "daqPort:" << daqPort;
-        qDebug() << "Sending to" << daqAddress << ":" << daqPort << "data:" << command.toHex();
-        qint64 sent = udpSocket->writeDatagram(command, daqAddress, daqPort);
-        qDebug() << "writeDatagram returned:" << sent << "error:" << udpSocket->errorString();
-        if (sent == -1) {
-            ui->statusbar->showMessage("Failed to send command!", 3000);
-        } else {
-            ui->statusbar->showMessage(tr("Command sent to %1:%2")
-                .arg(daqAddress.toString())
-                .arg(daqPort), 3000);
-        }
-    } else {
-        ui->statusbar->showMessage("Set DAQ IP first!", 3000);
-    }
-}
-
 void MainWindow::sendCommand(quint8 commandId, quint32 value)
 {
     // Always update daqPort and daqAddress from UI before sending
@@ -988,7 +945,18 @@ void MainWindow::updateCustomCommandsUI() {
         if (type == "spinbox") {
             QSpinBox *spin = new QSpinBox(group);
             spin->setMinimum(0);
-            spin->setMaximum((cmd["value_size"].toInt() == 1) ? 0xFF : (cmd["value_size"].toInt() == 2) ? 0xFFFF : (cmd["value_size"].toInt() == 4) ? 0xFFFFFFFF : 0xFFFF);
+            int valueSize = cmd["value_size"].toInt();
+            if (valueSize < 1) valueSize = 1;
+            if (valueSize > 64) valueSize = 64;
+            // Set maximum for up to 8 bytes, otherwise clamp to max for QSpinBox
+            if (valueSize <= 8) {
+                quint64 maxVal = (valueSize == 8) ? std::numeric_limits<quint64>::max() : (quint64(1) << (8 * valueSize)) - 1;
+                if (maxVal > quint64(std::numeric_limits<int>::max()))
+                    maxVal = std::numeric_limits<int>::max();
+                spin->setMaximum(static_cast<int>(maxVal));
+            } else {
+                spin->setMaximum(std::numeric_limits<int>::max());
+            }
             QPushButton *setBtn = new QPushButton("Set", group);
             QWidget *rowWidget = new QWidget(group);
             QHBoxLayout *rowLayout = new QHBoxLayout(rowWidget);
@@ -998,7 +966,7 @@ void MainWindow::updateCustomCommandsUI() {
             rowWidget->setLayout(rowLayout);
             form->addRow(label, rowWidget);
             // Connect setBtn to send the command
-            connect(setBtn, &QPushButton::clicked, this, [this, cmd, spin]() {
+            connect(setBtn, &QPushButton::clicked, this, [this, cmd, spin, valueSize]() {
                 qDebug() << "Custom spinbox Set button pressed for" << cmd["name"].toString();
                 QByteArray ba;
                 // Header
@@ -1007,19 +975,21 @@ void MainWindow::updateCustomCommandsUI() {
                 if (header != 0) {
                     for (int i = 3; i >= 0; --i) ba.append((header >> (8*i)) & 0xFF);
                 }
-                // Value
+                // Value (support up to 64 bytes, little-endian)
                 int value = spin->value();
-                int valueSize = cmd["value_size"].toInt();
                 for (int i = valueSize-1; i >= 0; --i) ba.append((value >> (8*i)) & 0xFF);
                 // Trailer
                 uint32_t trailer = cmd["trailer"].toString().toUInt(&ok, 16);
                 if (trailer != 0) {
                     for (int i = 3; i >= 0; --i) ba.append((trailer >> (8*i)) & 0xFF);
                 }
-                if (!daqAddress.isNull()) {
-                    qDebug() << "daqAddress:" << daqAddress << "daqPort:" << daqPort;
+                // Always fetch current IP and port from UI
+                QHostAddress addr(ui->ipLineEdit->text());
+                quint16 port = static_cast<quint16>(ui->portSpinBox->value());
+                if (!addr.isNull()) {
+                    qDebug() << "daqAddress:" << addr << "daqPort:" << port;
                     qDebug() << "Custom spinbox command send:" << ba.toHex();
-                    qint64 sent = udpSocket->writeDatagram(ba, daqAddress, daqPort);
+                    qint64 sent = udpSocket->writeDatagram(ba, addr, port);
                     qDebug() << "writeDatagram returned:" << sent << "error:" << udpSocket->errorString();
                     if (sent == -1) {
                         ui->statusbar->showMessage("Failed to send custom command!", 3000);
@@ -1042,10 +1012,13 @@ void MainWindow::updateCustomCommandsUI() {
                 } else {
                     ba = val.toUtf8();
                 }
-                if (!daqAddress.isNull()) {
-                    qDebug() << "daqAddress:" << daqAddress << "daqPort:" << daqPort;
+                // Always fetch current IP and port from UI
+                QHostAddress addr(ui->ipLineEdit->text());
+                quint16 port = static_cast<quint16>(ui->portSpinBox->value());
+                if (!addr.isNull()) {
+                    qDebug() << "daqAddress:" << addr << "daqPort:" << port;
                     qDebug() << "Custom button command send:" << ba.toHex();
-                    qint64 sent = udpSocket->writeDatagram(ba, daqAddress, daqPort);
+                    qint64 sent = udpSocket->writeDatagram(ba, addr, port);
                     qDebug() << "writeDatagram returned:" << sent << "error:" << udpSocket->errorString();
                     if (sent == -1) {
                         ui->statusbar->showMessage("Failed to send custom command!", 3000);

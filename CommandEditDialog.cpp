@@ -20,7 +20,7 @@ CommandEditDialog::CommandEditDialog(QWidget *parent)
     typeCombo->addItem("button");
     headerEdit = new QLineEdit(this);
     valueSizeSpin = new QSpinBox(this);
-    valueSizeSpin->setRange(0, 4);
+    valueSizeSpin->setRange(0, 64);
     valueSizeSpin->setSingleStep(1);
     valueSizeSpin->setSuffix(" bytes");
     trailerEdit = new QLineEdit(this);
