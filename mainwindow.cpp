@@ -145,6 +145,8 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::on_fieldTableWidget_itemChanged);
     connect(ui->applyFftCheckBox, &QCheckBox::stateChanged, this, &MainWindow::on_applyFftCheckBox_stateChanged);
     connect(ui->fftLengthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::on_fftLengthSpinBox_valueChanged);
+    // Set initial enabled state for FFT Length spin box
+    ui->fftLengthSpinBox->setEnabled(!ui->applyFftCheckBox->isChecked());
 
     // Add buffer for time series
     valueHistory.clear();
@@ -383,6 +385,8 @@ std::vector<float> MainWindow::computeFft(const std::vector<float> &data) {
 
 void MainWindow::on_applyFftCheckBox_stateChanged(int state) {
     fftBuffer.clear();
+    // Enable/disable FFT Length spin box based on Apply FFT state
+    ui->fftLengthSpinBox->setEnabled(state != Qt::Checked);
     
     if (state == Qt::Checked) {
         // Clear time-domain data
