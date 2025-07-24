@@ -11,6 +11,7 @@
 #include <vector>
 #include <complex>
 #include <QJsonObject>
+#include <QDialog>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -39,6 +40,7 @@ private slots:
     void on_loadPresetButton_clicked();
     void on_deletePresetButton_clicked();
     void on_presetComboBox_currentIndexChanged(int index);
+    void on_editCommandsButton_clicked();
 
 private:
     Ui::MainWindow *ui;
@@ -47,6 +49,7 @@ private:
     QHostAddress daqAddress;
     quint16 daqPort;
     int packetLength;
+    QWidget* customCommandsWidget = nullptr;
 
     // FFT related
     std::vector<float> fftBuffer;
@@ -82,6 +85,8 @@ private:
     void updatePresetComboBox();
     QJsonObject collectPreset() const;
     void applyPreset(const QJsonObject &preset);
+    void showCustomCommandDialog();
+    void updateCustomCommandsUI();
 };
 
 #endif // MAINWINDOW_H

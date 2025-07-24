@@ -295,6 +295,11 @@
       </item>
      </layout>
     </item>
+    <item>
+     <widget class="QPushButton" name="editCommandsButton">
+      <property name="text"><string>Edit Commands</string></property>
+     </widget>
+    </item>
    </layout>
   </widget>
   <widget class="QMenuBar" name="menubar"/>

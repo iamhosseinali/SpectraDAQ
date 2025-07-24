@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "CustomCommandDialog.h"
 #include <QHostAddress>
 #include <QMessageBox>
 #include <QDebug>
@@ -17,6 +18,13 @@
 #include <QJsonArray>
 #include <QFile>
 #include <QInputDialog>
+#include <QScrollArea>
+#include <QGroupBox>
+#include <QFormLayout>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QLabel>
+#include <QHBoxLayout>
 
 QT_CHARTS_USE_NAMESPACE
 
@@ -221,6 +229,7 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     updatePresetComboBox();
+    updateCustomCommandsUI();
 }
 
 MainWindow::~MainWindow()
@@ -232,12 +241,13 @@ MainWindow::~MainWindow()
 void MainWindow::initializeSocket()
 {
     udpSocket->close();
-    if (!udpSocket->bind(QHostAddress::Any, daqPort)) {
-        ui->statusbar->showMessage(tr("Failed to bind to port %1").arg(daqPort), 3000);
-        qDebug() << "Failed to bind to port" << daqPort;
+    // Bind to the user-specified port for both sending and receiving
+    if (!udpSocket->bind(QHostAddress::AnyIPv4, daqPort, QUdpSocket::DefaultForPlatform)) {
+        ui->statusbar->showMessage(tr("Failed to bind UDP socket!"), 3000);
+        qDebug() << "Failed to bind UDP socket!";
     } else {
-        ui->statusbar->showMessage(tr("Bound to port %1").arg(daqPort), 3000);
-        qDebug() << "Bound to port" << daqPort;
+        ui->statusbar->showMessage(tr("UDP socket bound to port %1").arg(daqPort), 3000);
+        qDebug() << "UDP socket bound to port" << daqPort;
     }
 }
 
@@ -259,6 +269,9 @@ void MainWindow::on_portSpinBox_editingFinished()
 
 void MainWindow::on_startButton_clicked()
 {
+    // Always update daqPort and daqAddress from UI before sending
+    daqPort = static_cast<quint16>(ui->portSpinBox->value());
+    daqAddress = QHostAddress(ui->ipLineEdit->text());
     packetLength = ui->packetLengthSpinBox->value();
     QString cmdText = ui->commandLineEdit->text().trimmed();
     QByteArray command;
@@ -281,10 +294,17 @@ void MainWindow::on_startButton_clicked()
         command = cmdText.toUtf8();
     }
     if (!daqAddress.isNull()) {
-        udpSocket->writeDatagram(command, daqAddress, daqPort);
-        ui->statusbar->showMessage(tr("Command sent to %1:%2")
-            .arg(daqAddress.toString())
-            .arg(daqPort), 3000);
+        qDebug() << "daqAddress:" << daqAddress << "daqPort:" << daqPort;
+        qDebug() << "Sending to" << daqAddress << ":" << daqPort << "data:" << command.toHex();
+        qint64 sent = udpSocket->writeDatagram(command, daqAddress, daqPort);
+        qDebug() << "writeDatagram returned:" << sent << "error:" << udpSocket->errorString();
+        if (sent == -1) {
+            ui->statusbar->showMessage("Failed to send command!", 3000);
+        } else {
+            ui->statusbar->showMessage(tr("Command sent to %1:%2")
+                .arg(daqAddress.toString())
+                .arg(daqPort), 3000);
+        }
     } else {
         ui->statusbar->showMessage("Set DAQ IP first!", 3000);
     }
@@ -292,6 +312,9 @@ void MainWindow::on_startButton_clicked()
 
 void MainWindow::sendCommand(quint8 commandId, quint32 value)
 {
+    // Always update daqPort and daqAddress from UI before sending
+    daqPort = static_cast<quint16>(ui->portSpinBox->value());
+    daqAddress = QHostAddress(ui->ipLineEdit->text());
     if (daqAddress.isNull()) {
         QMessageBox::warning(this, "Error", "Set DAQ IP first!");
         return;
@@ -894,4 +917,146 @@ void MainWindow::on_presetComboBox_currentIndexChanged(int index) {
     // Optionally auto-load preset on selection
     // QString name = ui->presetComboBox->itemText(index);
     // if (!name.isEmpty()) loadPresetFromFile(name);
+    updateCustomCommandsUI();
+}
+
+void MainWindow::on_editCommandsButton_clicked() {
+    // Find current preset
+    QString name = ui->presetComboBox->currentText();
+    if (name.isEmpty()) return;
+    QFile file("presets.json");
+    if (!file.open(QIODevice::ReadOnly)) return;
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    QJsonObject root = doc.object();
+    QJsonArray presets = root["presets"].toArray();
+    for (int i = 0; i < presets.size(); ++i) {
+        QJsonObject obj = presets[i].toObject();
+        if (obj["name"].toString() == name) {
+            QJsonArray commands = obj["custom_commands"].toArray();
+            CustomCommandDialog dlg(commands, this);
+            if (dlg.exec() == QDialog::Accepted) {
+                obj["custom_commands"] = dlg.getCommands();
+                presets[i] = obj;
+                root["presets"] = presets;
+                QFile outFile("presets.json");
+                if (outFile.open(QIODevice::WriteOnly)) {
+                    QJsonDocument outDoc(root);
+                    outFile.write(outDoc.toJson());
+                    outFile.close();
+                }
+                // Update UI with new commands
+                updateCustomCommandsUI();
+            }
+            break;
+        }
+    }
+}
+
+void MainWindow::updateCustomCommandsUI() {
+    // Remove old widget if present
+    if (customCommandsWidget) {
+        ui->verticalLayout->removeWidget(customCommandsWidget);
+        customCommandsWidget->deleteLater();
+        customCommandsWidget = nullptr;
+    }
+    // Find current preset
+    QString name = ui->presetComboBox->currentText();
+    if (name.isEmpty()) return;
+    QFile file("presets.json");
+    if (!file.open(QIODevice::ReadOnly)) return;
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    file.close();
+    QJsonObject root = doc.object();
+    QJsonArray presets = root["presets"].toArray();
+    QJsonArray commands;
+    for (int i = 0; i < presets.size(); ++i) {
+        QJsonObject obj = presets[i].toObject();
+        if (obj["name"].toString() == name) {
+            commands = obj["custom_commands"].toArray();
+            break;
+        }
+    }
+    if (commands.isEmpty()) return;
+    // Create a group box for commands
+    QGroupBox *group = new QGroupBox("Custom Commands", this);
+    QFormLayout *form = new QFormLayout(group);
+    for (const QJsonValue &val : commands) {
+        QJsonObject cmd = val.toObject();
+        QString type = cmd["type"].toString();
+        QString label = cmd["name"].toString();
+        if (type == "spinbox") {
+            QSpinBox *spin = new QSpinBox(group);
+            spin->setMinimum(0);
+            spin->setMaximum((cmd["value_size"].toInt() == 1) ? 0xFF : (cmd["value_size"].toInt() == 2) ? 0xFFFF : (cmd["value_size"].toInt() == 4) ? 0xFFFFFFFF : 0xFFFF);
+            QPushButton *setBtn = new QPushButton("Set", group);
+            QWidget *rowWidget = new QWidget(group);
+            QHBoxLayout *rowLayout = new QHBoxLayout(rowWidget);
+            rowLayout->addWidget(spin);
+            rowLayout->addWidget(setBtn);
+            rowLayout->setContentsMargins(0,0,0,0);
+            rowWidget->setLayout(rowLayout);
+            form->addRow(label, rowWidget);
+            // Connect setBtn to send the command
+            connect(setBtn, &QPushButton::clicked, this, [this, cmd, spin]() {
+                qDebug() << "Custom spinbox Set button pressed for" << cmd["name"].toString();
+                QByteArray ba;
+                // Header
+                bool ok = false;
+                uint32_t header = cmd["header"].toString().toUInt(&ok, 16);
+                if (header != 0) {
+                    for (int i = 3; i >= 0; --i) ba.append((header >> (8*i)) & 0xFF);
+                }
+                // Value
+                int value = spin->value();
+                int valueSize = cmd["value_size"].toInt();
+                for (int i = valueSize-1; i >= 0; --i) ba.append((value >> (8*i)) & 0xFF);
+                // Trailer
+                uint32_t trailer = cmd["trailer"].toString().toUInt(&ok, 16);
+                if (trailer != 0) {
+                    for (int i = 3; i >= 0; --i) ba.append((trailer >> (8*i)) & 0xFF);
+                }
+                if (!daqAddress.isNull()) {
+                    qDebug() << "daqAddress:" << daqAddress << "daqPort:" << daqPort;
+                    qDebug() << "Custom spinbox command send:" << ba.toHex();
+                    qint64 sent = udpSocket->writeDatagram(ba, daqAddress, daqPort);
+                    qDebug() << "writeDatagram returned:" << sent << "error:" << udpSocket->errorString();
+                    if (sent == -1) {
+                        ui->statusbar->showMessage("Failed to send custom command!", 3000);
+                    } else {
+                        ui->statusbar->showMessage(QString("Command '%1' sent").arg(cmd["name"].toString()), 3000);
+                    }
+                }
+            });
+        } else if (type == "button") {
+            QPushButton *sendBtn = new QPushButton("Send", group);
+            form->addRow(label, sendBtn);
+            connect(sendBtn, &QPushButton::clicked, this, [this, cmd]() {
+                qDebug() << "Custom Send button pressed for" << cmd["name"].toString();
+                QByteArray ba;
+                QString val = cmd["command"].toString();
+                if (val.startsWith("0x")) {
+                    bool ok = false;
+                    uint32_t hex = val.toUInt(&ok, 16);
+                    for (int i = 3; i >= 0; --i) ba.append((hex >> (8*i)) & 0xFF);
+                } else {
+                    ba = val.toUtf8();
+                }
+                if (!daqAddress.isNull()) {
+                    qDebug() << "daqAddress:" << daqAddress << "daqPort:" << daqPort;
+                    qDebug() << "Custom button command send:" << ba.toHex();
+                    qint64 sent = udpSocket->writeDatagram(ba, daqAddress, daqPort);
+                    qDebug() << "writeDatagram returned:" << sent << "error:" << udpSocket->errorString();
+                    if (sent == -1) {
+                        ui->statusbar->showMessage("Failed to send custom command!", 3000);
+                    } else {
+                        ui->statusbar->showMessage(QString("Command '%1' sent").arg(cmd["name"].toString()), 3000);
+                    }
+                }
+            });
+        }
+    }
+    group->setLayout(form);
+    customCommandsWidget = group;
+    ui->verticalLayout->addWidget(customCommandsWidget);
 }

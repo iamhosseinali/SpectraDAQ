@@ -9,10 +9,14 @@ CONFIG += c++17
 
 SOURCES += \
         main.cpp \
-        mainwindow.cpp
+        mainwindow.cpp \
+        CustomCommandDialog.cpp \
+        CommandEditDialog.cpp
 
 HEADERS += \
-        mainwindow.h
+        mainwindow.h \
+        CustomCommandDialog.h \
+        CommandEditDialog.h
 
 FORMS += \
         mainwindow.ui
