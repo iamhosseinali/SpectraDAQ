@@ -7,6 +7,7 @@
 class QLineEdit;
 class QComboBox;
 class QSpinBox;
+class QCheckBox; // Added for QCheckBox
 
 class CommandEditDialog : public QDialog {
     Q_OBJECT
@@ -25,6 +26,7 @@ private:
     QSpinBox *valueSizeSpin;
     QLineEdit *trailerEdit;
     QLineEdit *commandEdit;
+    QCheckBox *swapEndianCheck; // Added for QCheckBox
 };
 
 #endif // COMMANDEDITDIALOG_H 

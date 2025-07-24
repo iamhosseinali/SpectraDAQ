@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QSpinBox>
 #include <QPushButton>
+#include <QCheckBox>
 
 CommandEditDialog::CommandEditDialog(QWidget *parent)
     : QDialog(parent)
@@ -23,12 +24,14 @@ CommandEditDialog::CommandEditDialog(QWidget *parent)
     valueSizeSpin->setRange(0, 64);
     valueSizeSpin->setSingleStep(1);
     valueSizeSpin->setSuffix(" bytes");
+    swapEndianCheck = new QCheckBox("Swap Endianness (Value Only)", this);
     trailerEdit = new QLineEdit(this);
     commandEdit = new QLineEdit(this);
     form->addRow("Name", nameEdit);
     form->addRow("Type", typeCombo);
     form->addRow("Header (hex)", headerEdit);
     form->addRow("Value Size", valueSizeSpin);
+    form->addRow("", swapEndianCheck);
     form->addRow("Trailer (hex)", trailerEdit);
     form->addRow("Command (string/hex)", commandEdit);
     mainLayout->addLayout(form);
@@ -49,6 +52,7 @@ void CommandEditDialog::onTypeChanged(const QString &type) {
     headerEdit->setVisible(isSpinbox);
     valueSizeSpin->setVisible(isSpinbox);
     trailerEdit->setVisible(isSpinbox);
+    swapEndianCheck->setVisible(isSpinbox);
     commandEdit->setVisible(!isSpinbox);
 }
 
@@ -60,6 +64,7 @@ void CommandEditDialog::setCommand(const CustomCommandData &data) {
     valueSizeSpin->setValue(data.value_size);
     trailerEdit->setText(data.trailer);
     commandEdit->setText(data.command);
+    swapEndianCheck->setChecked(data.swap_endian);
     onTypeChanged(data.type);
 }
 
@@ -71,5 +76,6 @@ CustomCommandData CommandEditDialog::getCommand() const {
     data.value_size = valueSizeSpin->value();
     data.trailer = trailerEdit->text();
     data.command = commandEdit->text();
+    data.swap_endian = swapEndianCheck->isChecked();
     return data;
 } 

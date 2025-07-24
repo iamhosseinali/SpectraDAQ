@@ -977,7 +977,13 @@ void MainWindow::updateCustomCommandsUI() {
                 }
                 // Value (support up to 64 bytes, little-endian)
                 int value = spin->value();
-                for (int i = valueSize-1; i >= 0; --i) ba.append((value >> (8*i)) & 0xFF);
+                QByteArray valueBytes;
+                for (int i = valueSize-1; i >= 0; --i) valueBytes.append((value >> (8*i)) & 0xFF);
+                // Swap endianness if requested (reverse valueBytes)
+                if (cmd.contains("swap_endian") && cmd["swap_endian"].toBool() && valueBytes.size() > 1) {
+                    std::reverse(valueBytes.begin(), valueBytes.end());
+                }
+                ba.append(valueBytes);
                 // Trailer
                 uint32_t trailer = cmd["trailer"].toString().toUInt(&ok, 16);
                 if (trailer != 0) {

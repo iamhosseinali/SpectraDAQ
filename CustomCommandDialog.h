@@ -13,6 +13,7 @@ struct CustomCommandData {
     int value_size; // 0, 1, 2, or 4 (bytes)
     QString trailer; // hex string, or "0"
     QString command; // for button type
+    bool swap_endian = false; // new: swap endianness for value only
     QJsonObject toJson() const {
         QJsonObject obj;
         obj["name"] = name;
@@ -21,6 +22,7 @@ struct CustomCommandData {
         obj["value_size"] = value_size;
         obj["trailer"] = trailer;
         obj["command"] = command;
+        obj["swap_endian"] = swap_endian;
         return obj;
     }
     static CustomCommandData fromJson(const QJsonObject &obj) {
@@ -31,6 +33,7 @@ struct CustomCommandData {
         d.value_size = obj["value_size"].toInt();
         d.trailer = obj["trailer"].toString();
         d.command = obj["command"].toString();
+        d.swap_endian = obj.contains("swap_endian") ? obj["swap_endian"].toBool() : false;
         return d;
     }
 };
