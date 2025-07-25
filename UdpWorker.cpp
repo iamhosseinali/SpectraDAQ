@@ -3,6 +3,10 @@
 #include <QtEndian>
 #include <algorithm>
 #include "mainwindow.h"
+#include <QDateTime>
+#ifdef Q_OS_LINUX
+#include <sys/socket.h>
+#endif
 
 UdpWorker::UdpWorker(QObject *parent) : QObject(parent) {
     ringBuffer.resize(RING_BUFFER_SIZE);
@@ -59,6 +63,14 @@ void UdpWorker::start(quint16 port_) {
     if (udpSocket) return;
     port = port_;
     udpSocket = new QUdpSocket(this);
+    // Set Qt buffer size BEFORE binding
+    udpSocket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption, 64 * 1024 * 1024);  // 64MB
+    // Set OS-level buffer size (Linux)
+#ifdef Q_OS_LINUX
+    int sockfd = udpSocket->socketDescriptor();
+    int bufSize = 64 * 1024 * 1024;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
+#endif
     if (!udpSocket->bind(QHostAddress::AnyIPv4, port)) {
         emit errorOccurred(QString("Failed to bind UDP socket on port %1").arg(port));
         return;
@@ -106,8 +118,11 @@ void UdpWorker::pushToRingBuffer(const QByteArray& datagram) {
         ringBuffer[currentHead] = datagram;
         ringHead.store(nextHead, std::memory_order_release);
     } else {
-        // Buffer full: drop or overwrite policy (currently drop)
-        // Optionally count drops for diagnostics
+        static QAtomicInt dropCount = 0;
+        dropCount++;
+        if (dropCount % 1000 == 0) {
+            qWarning() << "Dropped" << dropCount << "packets due to full buffer";
+        }
     }
 }
 
@@ -123,35 +138,32 @@ bool UdpWorker::popFromRingBuffer(QByteArray& datagram) {
 
 void UdpWorker::processPendingDatagrams() {
     if (!running || !udpSocket) return;
-
-    // Preallocate a buffer for the largest datagram
     static QByteArray buffer;
     static const int maxDatagramSize = 65536; // 64KB, adjust as needed
     if (buffer.size() < maxDatagramSize) buffer.resize(maxDatagramSize);
-
     QVector<float> allValues;
-    allValues.reserve(4096); // Reserve for typical batch size, adjust as needed
-
+    allValues.reserve(4096);
     while (udpSocket->hasPendingDatagrams() && running) {
         qint64 size = udpSocket->pendingDatagramSize();
+        if (size > maxDatagramSize) continue; // Skip oversized
         if (buffer.size() < size) buffer.resize(size);
-        udpSocket->readDatagram(buffer.data(), size);
-        // Make a real copy to avoid repeated samples in ring buffer
-        QByteArray datagram(buffer.constData(), int(size));
+        qint64 read = udpSocket->readDatagram(buffer.data(), size);
+        if (read != size) continue;
         QVector<float> values;
-        parseDatagram(datagram, values);
+        // Zero-copy: pass pointer and size
+        parseDatagram(buffer.constData(), size, values);
         allValues += values;
-        pushToRingBuffer(datagram); // Use ring buffer for logging
+        // Only copy for ring buffer
+        pushToRingBuffer(QByteArray(buffer.constData(), size));
     }
-
     if (!allValues.isEmpty()) {
         emit dataReceived(allValues);
     }
 }
 
-void UdpWorker::parseDatagram(const QByteArray &datagram, QVector<float> &values) {
+void UdpWorker::parseDatagram(const char* data, qint64 size, QVector<float>& values) {
     if (structSize <= 0 || selectedField < 0 || selectedField >= fields.size()) return;
-    int numStructs = datagram.size() / structSize;
+    int numStructs = size / structSize;
     const FieldDef &field = fields[selectedField];
     int typeSz = (selectedField < fieldSizes.size()) ? fieldSizes[selectedField] : 0;
     int fieldOffset = (selectedField < fieldOffsets.size()) ? fieldOffsets[selectedField] : 0;
@@ -161,8 +173,8 @@ void UdpWorker::parseDatagram(const QByteArray &datagram, QVector<float> &values
     for (int structIdx = 0; structIdx < numStructs; ++structIdx) {
         int offset = structIdx * structSize + fieldOffset;
         float value = 0.0f;
-        if (offset + typeSz <= datagram.size()) {
-            const char* ptr = datagram.constData() + offset;
+        if (offset + typeSz <= size) {
+            const char* ptr = data + offset;
             bool swap = endianness;
             if (field.type == "int16_t") {
                 int16_t v = *reinterpret_cast<const int16_t*>(ptr);

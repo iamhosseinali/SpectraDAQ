@@ -53,7 +53,8 @@ private:
     QVector<int> fieldOffsets; // Precomputed offsets for each field
     QVector<int> fieldSizes;      // Precomputed sizes for each field
     QVector<int> fieldAlignments; // Precomputed alignments for each field
-    void parseDatagram(const QByteArray &datagram, QVector<float> &values);
+    void parseDatagram(const char* data, qint64 size, QVector<float>& values); // Zero-copy version
+    void parseDatagram(const QByteArray &datagram, QVector<float> &values); // Old version (optional)
     LoggingManager* loggingManager = nullptr;
     static constexpr int RING_BUFFER_SIZE = 1024;
     std::vector<QByteArray> ringBuffer;
