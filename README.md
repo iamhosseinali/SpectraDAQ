@@ -1,33 +1,32 @@
 # SpectraDAQ - DAQ Monitor
 
-## Overview
-SpectraDAQ is a Qt-based application for real-time monitoring and control of DAQ (Data Acquisition) devices over UDP. It features flexible struct parsing, real-time plotting, FFT analysis, and a powerful custom command system for device control.
-
----
+## Description
+SpectraDAQ is a Qt-based application for real-time monitoring and control of data acquisition (DAQ) devices over UDP. It supports binary struct parsing, high-throughput logging, real-time plotting, FFT analysis, and a customizable command system for device control.
 
 ## Features
-- **UDP Communication**: Send and receive UDP packets to/from DAQ devices.
-- **Struct Parsing**: Paste C struct definitions to parse incoming binary data.
-- **Real-Time Plotting**: Visualize selected struct fields as time series or FFT.
-- **Presets**: Save/load all UI state, including struct, plotting, and custom commands, to/from JSON.
-- **Custom Commands**: Define and send device-specific commands with flexible formatting.
+- UDP communication for sending and receiving packets to/from DAQ hardware.
+- C struct parsing: user can paste C struct definitions to interpret incoming binary data.
+- Real-time plotting of selected struct fields (time series and FFT modes).
+- Preset system: save/load all UI state, including struct, plotting, and custom commands, to/from JSON.
+- Custom command system: define and send device-specific commands with flexible formatting.
+- High-speed logging: supports logging incoming data to CSV at rates up to 1 Gbps with zero data loss (requires Boost lockfree queue).
 
----
+## Logging System
+- Logging is initiated via the UI. User specifies duration (seconds) and output CSV file.
+- During logging, all UI and plotting features are disabled for maximum performance.
+- Data is buffered in a lock-free queue and written to disk in batches using a dedicated thread.
+- CSV output is type-aware: each struct field is parsed and written as its correct value (signed/unsigned, float, etc.).
+- Logging uses all available CPU cores for buffering and writing. UDP receive is single-threaded (Qt limitation).
+- Boost (header-only) is required for lockfree queue. Set INCLUDEPATH in the .pro file accordingly.
 
 ## Custom Command System
-
-### Types
-- **Spinbox**: Command with a user-settable integer value (0 to 2,147,483,647, up to 64 bytes encoded).
-- **Button**: Command with a fixed payload (string or hex).
-
-### Spinbox Command Options
-- **Header**: Optional 4-byte (hex) prefix.
-- **Value Size**: 1–64 bytes. Value is encoded as unsigned integer, little-endian by default.
-- **Swap Endianness (Value Only)**: If checked, the value bytes are reversed (endianness swapped) before sending. Header and trailer are unaffected.
-- **Trailer**: Optional 4-byte (hex) suffix.
+- Two command types: Spinbox (integer value, 1–64 bytes, optional endianness swap) and Button (fixed payload, string or hex).
+- Spinbox command options: header (4-byte hex), value size (1–64 bytes), swap endianness (boolean), trailer (4-byte hex).
+- Button command options: header, trailer, command payload (string or hex).
+- All command options are stored in `presets.json` under the `custom_commands` array for each preset.
 
 ### Example: Spinbox Command JSON
-```json
+```
 {
   "name": "Set Threshold",
   "type": "spinbox",
@@ -38,11 +37,9 @@ SpectraDAQ is a Qt-based application for real-time monitoring and control of DAQ
   "command": ""
 }
 ```
-- `swap_endian` is a boolean. If true, the value bytes are reversed before sending.
-- All fields are saved in the `presets.json` file under the `custom_commands` array for each preset.
 
 ### Example: Button Command JSON
-```json
+```
 {
   "name": "Start Acquisition",
   "type": "button",
@@ -54,29 +51,20 @@ SpectraDAQ is a Qt-based application for real-time monitoring and control of DAQ
 }
 ```
 
----
-
-## How to Add/Edit Custom Commands
-1. Click **Edit Commands**.
-2. Add or edit a command:
-   - For **Spinbox**: Set header, value size (1–64), trailer, and optionally enable swap endianness.
-   - For **Button**: Enter the command payload (string or hex).
-3. Save. The command will appear in the main UI for the current preset.
-
----
+## Usage
+- Paste C struct definition in the UI to parse incoming UDP data.
+- Select fields for plotting or logging.
+- Use the "Log to CSV" button to start high-speed logging. Specify duration and output file.
+- All UI controls are disabled during logging. Logging is type-aware and lossless (subject to system RAM and disk speed).
+- Use the "Edit Commands" button to define custom device commands. Commands are sent over UDP.
 
 ## Technical Notes
-- **Value Encoding**: Spinbox values are encoded as unsigned integers, using the specified number of bytes. If swap endianness is enabled, only the value bytes are reversed.
-- **Limits**: The UI spinbox supports values up to 2,147,483,647 (due to QSpinBox limits). For value sizes >4 bytes, only the lower bytes of the integer are used.
-- **Persistence**: All custom command options, including swap endianness, are saved in `presets.json` and restored with the preset.
-
----
-
-## File: `presets.json`
+- Spinbox values are encoded as unsigned integers, using the specified number of bytes. Endianness swap applies only to value bytes.
+- QSpinBox UI limit is 2,147,483,647. For value sizes >4 bytes, only the lower bytes of the integer are used.
+- All custom command options, including endianness, are saved in `presets.json` and restored with the preset.
 - Presets are stored as an array of objects, each with a `custom_commands` array.
-- Each custom command object includes all fields described above.
 
----
-
-## Changelog
-- **vNext**: Added support for up to 64-byte spinbox values and per-command value endianness swapping.
+## Build Requirements
+- Qt 5.x or 6.x (tested with Qt 5.13+)
+- Boost (header-only, for lockfree queue)
+- C++17 or later
