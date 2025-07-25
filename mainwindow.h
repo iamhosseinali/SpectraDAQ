@@ -17,6 +17,8 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
+class LoggingManager; // Forward declaration
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -40,6 +42,7 @@ private slots:
     void on_deletePresetButton_clicked();
     void on_presetComboBox_currentIndexChanged(int index);
     void on_editCommandsButton_clicked();
+    void on_logToCsvButton_clicked();
 
 private:
     Ui::MainWindow *ui;
@@ -86,6 +89,7 @@ private:
     void applyPreset(const QJsonObject &preset);
     void showCustomCommandDialog();
     void updateCustomCommandsUI();
+    LoggingManager* loggingManager = nullptr;
 };
 
 #endif // MAINWINDOW_H

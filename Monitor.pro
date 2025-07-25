@@ -6,12 +6,13 @@ TEMPLATE = app
 DEFINES += QT_DEPRECATED_WARNINGS
 
 CONFIG += c++17
-
+INCLUDEPATH += C:/local/boost_1_88_0
 SOURCES += \
         main.cpp \
         mainwindow.cpp \
+        CommandEditDialog.cpp \
         CustomCommandDialog.cpp \
-        CommandEditDialog.cpp
+        LoggingManager.cpp
 
 HEADERS += \
         mainwindow.h \

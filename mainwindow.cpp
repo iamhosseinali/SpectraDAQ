@@ -25,18 +25,15 @@
 #include <QSpinBox>
 #include <QLabel>
 #include <QHBoxLayout>
+#include "LoggingManager.h"
+#include <QInputDialog>
+#include <QFileDialog>
+#include "FieldDef.h"
 
 QT_CHARTS_USE_NAMESPACE
 
 const quint8 FS_COMM_IDF = 0x55;
 const quint8 FRQ_COMM_IDF = 0xAA;
-
-// Helper struct for parsed fields
-struct FieldDef {
-    QString type;
-    QString name;
-    int count;
-};
 
 // Simple C struct parser
 QList<FieldDef> parseCStruct(const QString &structText) {
@@ -230,6 +227,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     updatePresetComboBox();
     updateCustomCommandsUI();
+    connect(ui->logToCsvButton, &QPushButton::clicked, this, &MainWindow::on_logToCsvButton_clicked);
 }
 
 MainWindow::~MainWindow()
@@ -519,6 +517,11 @@ void MainWindow::readPendingDatagrams()
         QHostAddress sender;
         quint16 senderPort;
         udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+        // Logging mode: buffer packets only
+        if (loggingManager && loggingManager->isRunning()) {
+            loggingManager->enqueuePacket(datagram);
+            continue;
+        }
         if (ui->debugLogCheckBox->isChecked()) qDebug() << "Received datagram of size" << datagram.size();
         int structSize = getStructSize();
         if (datagram.size() > 0 && structSize > 0) {
@@ -1038,4 +1041,46 @@ void MainWindow::updateCustomCommandsUI() {
     group->setLayout(form);
     customCommandsWidget = group;
     ui->verticalLayout->addWidget(customCommandsWidget);
+}
+
+void MainWindow::on_logToCsvButton_clicked() {
+    // Prompt for duration
+    bool ok = false;
+    int duration = QInputDialog::getInt(this, "Log Duration", "Enter duration (seconds):", 10, 1, 3600, 1, &ok);
+    if (!ok) return;
+    // Prompt for filename
+    QString filename = QFileDialog::getSaveFileName(this, "Save CSV Log", "", "CSV Files (*.csv)");
+    if (filename.isEmpty()) return;
+
+    // Parse struct fields
+    QString structText = ui->structTextEdit->toPlainText();
+    QList<FieldDef> fields = parseCStruct(structText);
+    int structSize = getStructSize();
+    if (fields.isEmpty() || structSize == 0) {
+        QMessageBox::warning(this, "Error", "Invalid struct definition");
+        return;
+    }
+
+    // Stop all timers/UI/plotting
+    if (autoScaleYTimer) autoScaleYTimer->stop();
+    if (plotUpdateTimer) plotUpdateTimer->stop();
+    // Optionally disable all controls
+    for (auto w : findChildren<QWidget*>()) w->setEnabled(false);
+    ui->statusbar->showMessage("Logging in progress...", 0);
+
+    // Create and start LoggingManager
+    if (loggingManager) { delete loggingManager; loggingManager = nullptr; }
+    loggingManager = new LoggingManager(fields, structSize, duration, filename);
+    connect(loggingManager, &LoggingManager::loggingFinished, this, [this]() {
+        // Re-enable UI
+        for (auto w : findChildren<QWidget*>()) w->setEnabled(true);
+        if (autoScaleYTimer) autoScaleYTimer->start();
+        if (plotUpdateTimer) plotUpdateTimer->start();
+        ui->statusbar->showMessage("Logging finished.", 3000);
+    });
+    connect(loggingManager, &LoggingManager::loggingError, this, [this](const QString& msg) {
+        QMessageBox::critical(this, "Logging Error", msg);
+        for (auto w : findChildren<QWidget*>()) w->setEnabled(true);
+    });
+    loggingManager->start();
 }

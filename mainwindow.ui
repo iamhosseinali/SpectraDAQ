@@ -138,6 +138,11 @@
     </item>
     <!-- Add struct input UI below chartView -->
     <item>
+     <widget class="QPushButton" name="logToCsvButton">
+      <property name="text"><string>Log to CSV</string></property>
+     </widget>
+    </item>
+    <item>
      <widget class="QLabel" name="label_structInput">
       <property name="text"><string>Paste your C struct definition here:</string></property>
      </widget>
