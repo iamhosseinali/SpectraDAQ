@@ -1044,13 +1044,35 @@ void MainWindow::updateCustomCommandsUI() {
 }
 
 void MainWindow::on_logToCsvButton_clicked() {
-    // Prompt for duration
-    bool ok = false;
-    int duration = QInputDialog::getInt(this, "Log Duration", "Enter duration (seconds):", 10, 1, 3600, 1, &ok);
-    if (!ok) return;
-    // Prompt for filename
-    QString filename = QFileDialog::getSaveFileName(this, "Save CSV Log", "", "CSV Files (*.csv)");
-    if (filename.isEmpty()) return;
+    ui->logToCsvButton->setEnabled(false);
+    ui->logToCsvButton->clearFocus(); // Prevent focus-triggered re-entry
+    // Optionally: ui->structTextEdit->setFocus();
+    // Create and show duration input dialog
+    QInputDialog durationDialog(this);
+    durationDialog.setWindowTitle("Log Duration");
+    durationDialog.setLabelText("Enter duration (seconds):");
+    durationDialog.setInputMode(QInputDialog::IntInput);
+    durationDialog.setIntRange(1, 3600);
+    durationDialog.setIntValue(10);
+    durationDialog.setIntStep(1);
+    if (durationDialog.exec() != QDialog::Accepted) {
+        ui->logToCsvButton->setEnabled(true);
+        return;
+    }
+    int duration = durationDialog.intValue();
+    durationDialog.close();  // Explicitly close the dialog
+
+    // Create and show file dialog
+    QFileDialog fileDialog(this);
+    fileDialog.setAcceptMode(QFileDialog::AcceptSave);
+    fileDialog.setDefaultSuffix("csv");
+    fileDialog.setNameFilter("CSV Files (*.csv)");
+    if (fileDialog.exec() != QDialog::Accepted) {
+        ui->logToCsvButton->setEnabled(true);
+        return;
+    }
+    QString filename = fileDialog.selectedFiles().first();
+    fileDialog.close();  // Explicitly close the dialog
 
     // Parse struct fields
     QString structText = ui->structTextEdit->toPlainText();
@@ -1058,22 +1080,25 @@ void MainWindow::on_logToCsvButton_clicked() {
     int structSize = getStructSize();
     if (fields.isEmpty() || structSize == 0) {
         QMessageBox::warning(this, "Error", "Invalid struct definition");
+        ui->logToCsvButton->setEnabled(true);
         return;
     }
 
     // Stop all timers/UI/plotting
     if (autoScaleYTimer) autoScaleYTimer->stop();
     if (plotUpdateTimer) plotUpdateTimer->stop();
-    // Optionally disable all controls
     for (auto w : findChildren<QWidget*>()) w->setEnabled(false);
     ui->statusbar->showMessage("Logging in progress...", 0);
 
     // Create and start LoggingManager
-    if (loggingManager) { delete loggingManager; loggingManager = nullptr; }
+    if (loggingManager) { 
+        delete loggingManager; 
+        loggingManager = nullptr; 
+    }
     loggingManager = new LoggingManager(fields, structSize, duration, filename);
     connect(loggingManager, &LoggingManager::loggingFinished, this, [this]() {
-        // Re-enable UI
         for (auto w : findChildren<QWidget*>()) w->setEnabled(true);
+        ui->logToCsvButton->setEnabled(true); // Re-enable after logging
         if (autoScaleYTimer) autoScaleYTimer->start();
         if (plotUpdateTimer) plotUpdateTimer->start();
         ui->statusbar->showMessage("Logging finished.", 3000);
@@ -1081,6 +1106,8 @@ void MainWindow::on_logToCsvButton_clicked() {
     connect(loggingManager, &LoggingManager::loggingError, this, [this](const QString& msg) {
         QMessageBox::critical(this, "Logging Error", msg);
         for (auto w : findChildren<QWidget*>()) w->setEnabled(true);
+        ui->logToCsvButton->setEnabled(true);
     });
     loggingManager->start();
 }
+
