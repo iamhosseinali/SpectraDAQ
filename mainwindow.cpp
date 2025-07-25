@@ -511,6 +511,23 @@ void MainWindow::readPendingDatagrams()
         lastParsedFields = parseCStruct(currentStructText);
         lastStructText = currentStructText;
     }
+    int structSize = getStructSize();
+    // Find selected field
+    int selectedField = -1;
+    for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
+        QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
+        if (item && item->checkState() == Qt::Checked) {
+            selectedField = row;
+            break;
+        }
+    }
+    // If no field is selected, just clear the datagrams and return
+    if (selectedField == -1) {
+        while (udpSocket->hasPendingDatagrams()) {
+            udpSocket->readDatagram(nullptr, 0); // Discard
+        }
+        return;
+    }
     while (udpSocket->hasPendingDatagrams()) {
         QByteArray datagram;
         datagram.resize(int(udpSocket->pendingDatagramSize()));
@@ -523,10 +540,7 @@ void MainWindow::readPendingDatagrams()
             continue;
         }
         if (ui->debugLogCheckBox->isChecked()) qDebug() << "Received datagram of size" << datagram.size();
-        int structSize = getStructSize();
         if (datagram.size() > 0 && structSize > 0) {
-            int selectedField = -1;
-            int selectedArrayIndex = 0;
             int selectedFieldCount = 1;
             for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
                 QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
@@ -535,12 +549,12 @@ void MainWindow::readPendingDatagrams()
                     continue;
                 }
                 if (item->checkState() == Qt::Checked) {
-                    selectedField = row;
                     selectedFieldCount = ui->fieldTableWidget->item(row, 3)->text().toInt();
                     break;
                 }
             }
-            if (selectedField >= 0 && selectedFieldCount > 1) {
+            int selectedArrayIndex = 0;
+            if (selectedFieldCount > 1) {
                 selectedArrayIndex = ui->arrayIndexSpinBox->value();
             }
             bool fftEnabled = ui->applyFftCheckBox->isChecked();
