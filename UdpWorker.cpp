@@ -120,15 +120,20 @@ bool UdpWorker::popFromRingBuffer(QByteArray& datagram) {
 void UdpWorker::processPendingDatagrams() {
     if (!running || !udpSocket) return;
 
+    // Preallocate a buffer for the largest datagram
+    static QByteArray buffer;
+    static const int maxDatagramSize = 65536; // 64KB, adjust as needed
+    if (buffer.size() < maxDatagramSize) buffer.resize(maxDatagramSize);
+
     QVector<float> allValues;
-    QVector<QByteArray> datagrams;
+    allValues.reserve(4096); // Reserve for typical batch size, adjust as needed
+
     while (udpSocket->hasPendingDatagrams() && running) {
         qint64 size = udpSocket->pendingDatagramSize();
-        datagrams.append(QByteArray(size, Qt::Uninitialized));
-        udpSocket->readDatagram(datagrams.last().data(), size);
-    }
-
-    for (const QByteArray& datagram : datagrams) {
+        if (buffer.size() < size) buffer.resize(size);
+        udpSocket->readDatagram(buffer.data(), size);
+        // Make a real copy to avoid repeated samples in ring buffer
+        QByteArray datagram(buffer.constData(), int(size));
         QVector<float> values;
         parseDatagram(datagram, values);
         allValues += values;
