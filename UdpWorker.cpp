@@ -95,18 +95,29 @@ void UdpWorker::stopLogging() {
 
 void UdpWorker::processPendingDatagrams() {
     if (!running || !udpSocket) return;
-    QVector<float> values;
+
+    QVector<float> allValues; // Collect all values from all datagrams in this batch
+
+    // Batch: read all datagrams first
+    QVector<QByteArray> datagrams;
     while (udpSocket->hasPendingDatagrams() && running) {
-        QByteArray datagram;
-        datagram.resize(int(udpSocket->pendingDatagramSize()));
-        udpSocket->readDatagram(datagram.data(), datagram.size());
+        qint64 size = udpSocket->pendingDatagramSize();
+        datagrams.append(QByteArray(size, Qt::Uninitialized));
+        udpSocket->readDatagram(datagrams.last().data(), size);
+    }
+
+    // Batch: parse all datagrams
+    for (const QByteArray& datagram : datagrams) {
+        QVector<float> values;
         parseDatagram(datagram, values);
+        allValues += values; // Append all values
         if (loggingManager && loggingManager->isRunning()) {
-            loggingManager->enqueuePacket(datagram);
+            loggingManager->enqueuePacket(datagram); // Still log each datagram
         }
     }
-    if (!values.isEmpty()) {
-        emit dataReceived(values);
+
+    if (!allValues.isEmpty()) {
+        emit dataReceived(allValues);
     }
 }
 
