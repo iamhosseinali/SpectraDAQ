@@ -631,6 +631,20 @@ void MainWindow::handleUdpData(QVector<float> values) {
         return;
     }
     if (ui->debugLogCheckBox->isChecked()) qDebug() << "[handleUdpData] Received values for field" << selectedField << ":" << values;
+
+    if (ui->applyFftCheckBox->isChecked()) {
+        // FFT mode: fill fftBuffer and process when enough samples are collected
+        for (float value : values) {
+            fftBuffer.push_back(value);
+            if ((int)fftBuffer.size() == ui->fftLengthSpinBox->value()) {
+                processFftAndPlot();
+                // fftBuffer is cleared inside processFftAndPlot()
+            }
+        }
+        return; // Don't update time-domain plot
+    }
+
+    // Time-domain mode (existing code)
     for (float value : values) {
         if (valueHistory.size() >= xDiv) valueHistory.pop_front();
         valueHistory.append(QPointF(sampleIndex++, value));
