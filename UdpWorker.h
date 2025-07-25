@@ -8,6 +8,7 @@
 #include "LoggingManager.h"
 #include <atomic>
 #include <vector>
+#include <functional>
 
 class UdpWorker : public QObject {
     Q_OBJECT
@@ -18,6 +19,13 @@ public:
     void configure(const QString &structText, const QList<FieldDef> &fields, int structSize, bool endianness, int selectedField, int selectedArrayIndex, int selectedFieldCount);
     void pushToRingBuffer(const QByteArray& datagram);
     bool popFromRingBuffer(QByteArray& datagram);
+
+    using ConverterFunc = std::function<float(const char*, bool)>;
+
+    struct Packet {
+        QByteArray data;
+        qint64 timestamp = 0;
+    };
 
 public slots:
     void start(quint16 port);
@@ -53,11 +61,14 @@ private:
     QVector<int> fieldOffsets; // Precomputed offsets for each field
     QVector<int> fieldSizes;      // Precomputed sizes for each field
     QVector<int> fieldAlignments; // Precomputed alignments for each field
+    int selectedTypeSize = 0;
+    int selectedFieldOffset = 0;
+    ConverterFunc converter;
     void parseDatagram(const char* data, qint64 size, QVector<float>& values); // Zero-copy version
     void parseDatagram(const QByteArray &datagram, QVector<float> &values); // Old version (optional)
     LoggingManager* loggingManager = nullptr;
     static constexpr int RING_BUFFER_SIZE = 1024;
-    std::vector<QByteArray> ringBuffer;
+    QVector<Packet> ringBuffer;
     std::atomic<int> ringHead{0};
     std::atomic<int> ringTail{0};
 }; 

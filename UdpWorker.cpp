@@ -25,7 +25,7 @@ void UdpWorker::configure(const QString &structText_, const QList<FieldDef> &fie
     selectedArrayIndex = selectedArrayIndex_;
     selectedFieldCount = selectedFieldCount_;
 
-    // Precompute field offsets
+    // Precompute field offsets, sizes, alignments
     fieldOffsets.clear();
     fieldSizes.clear();
     fieldAlignments.clear();
@@ -53,6 +53,69 @@ void UdpWorker::configure(const QString &structText_, const QList<FieldDef> &fie
         fieldAlignments.append(align);
         offset += sz * fields[i].count;
     }
+    // Precompute selectedTypeSize and selectedFieldOffset
+    selectedTypeSize = fieldSizes.value(selectedField, 0);
+    selectedFieldOffset = fieldOffsets.value(selectedField, 0);
+    if (selectedField >= 0 && selectedField < fields.size() && fields[selectedField].count > 1) {
+        selectedFieldOffset += selectedArrayIndex * selectedTypeSize;
+    }
+    // Precompute converter
+    QString type = (selectedField >= 0 && selectedField < fields.size()) ? fields[selectedField].type : "";
+    if (type == "int16_t") {
+        converter = [](const char* ptr, bool swap) {
+            int16_t v = *reinterpret_cast<const int16_t*>(ptr);
+            return static_cast<float>(swap ? qFromLittleEndian(v) : v);
+        };
+    } else if (type == "uint16_t") {
+        converter = [](const char* ptr, bool swap) {
+            uint16_t v = *reinterpret_cast<const uint16_t*>(ptr);
+            return static_cast<float>(swap ? qFromLittleEndian(v) : v);
+        };
+    } else if (type == "int32_t") {
+        converter = [](const char* ptr, bool swap) {
+            int32_t v = *reinterpret_cast<const int32_t*>(ptr);
+            return static_cast<float>(swap ? qFromLittleEndian(v) : v);
+        };
+    } else if (type == "uint32_t") {
+        converter = [](const char* ptr, bool swap) {
+            uint32_t v = *reinterpret_cast<const uint32_t*>(ptr);
+            return static_cast<float>(swap ? qFromLittleEndian(v) : v);
+        };
+    } else if (type == "float") {
+        converter = [](const char* ptr, bool swap) {
+            float v = *reinterpret_cast<const float*>(ptr);
+            if (swap) v = qFromLittleEndian(v);
+            return v;
+        };
+    } else if (type == "int64_t") {
+        converter = [](const char* ptr, bool swap) {
+            int64_t v = *reinterpret_cast<const int64_t*>(ptr);
+            return static_cast<float>(swap ? qFromLittleEndian(v) : v);
+        };
+    } else if (type == "uint64_t") {
+        converter = [](const char* ptr, bool swap) {
+            uint64_t v = *reinterpret_cast<const uint64_t*>(ptr);
+            return static_cast<float>(swap ? qFromLittleEndian(v) : v);
+        };
+    } else if (type == "double") {
+        converter = [](const char* ptr, bool swap) {
+            double v = *reinterpret_cast<const double*>(ptr);
+            if (swap) v = qFromLittleEndian(v);
+            return static_cast<float>(v);
+        };
+    } else if (type == "int8_t") {
+        converter = [](const char* ptr, bool) {
+            return static_cast<float>(*reinterpret_cast<const int8_t*>(ptr));
+        };
+    } else if (type == "uint8_t" || type == "char") {
+        converter = [](const char* ptr, bool) {
+            return static_cast<float>(*reinterpret_cast<const uint8_t*>(ptr));
+        };
+    } else {
+        converter = [](const char*, bool) { return 0.0f; };
+    }
+    // Resize ring buffer to struct size
+    ringBuffer.resize(RING_BUFFER_SIZE);
 }
 
 void UdpWorker::updateConfig(const QString &structText_, const QList<FieldDef> &fields_, int structSize_, bool endianness_, int selectedField_, int selectedArrayIndex_, int selectedFieldCount_) {
@@ -115,7 +178,8 @@ void UdpWorker::pushToRingBuffer(const QByteArray& datagram) {
     int currentHead = ringHead.load(std::memory_order_relaxed);
     int nextHead = (currentHead + 1) % RING_BUFFER_SIZE;
     if (nextHead != ringTail.load(std::memory_order_acquire)) { // Not full
-        ringBuffer[currentHead] = datagram;
+        ringBuffer[currentHead].data = datagram;
+        ringBuffer[currentHead].timestamp = QDateTime::currentMSecsSinceEpoch();
         ringHead.store(nextHead, std::memory_order_release);
     } else {
         static QAtomicInt dropCount = 0;
@@ -131,7 +195,7 @@ bool UdpWorker::popFromRingBuffer(QByteArray& datagram) {
     if (currentTail == ringHead.load(std::memory_order_acquire)) {
         return false; // Empty
     }
-    datagram = ringBuffer[currentTail];
+    datagram = ringBuffer[currentTail].data;
     ringTail.store((currentTail + 1) % RING_BUFFER_SIZE, std::memory_order_release);
     return true;
 }
@@ -162,59 +226,12 @@ void UdpWorker::processPendingDatagrams() {
 }
 
 void UdpWorker::parseDatagram(const char* data, qint64 size, QVector<float>& values) {
-    if (structSize <= 0 || selectedField < 0 || selectedField >= fields.size()) return;
+    if (structSize <= 0 || selectedTypeSize == 0) return;
     int numStructs = size / structSize;
-    const FieldDef &field = fields[selectedField];
-    int typeSz = (selectedField < fieldSizes.size()) ? fieldSizes[selectedField] : 0;
-    int fieldOffset = (selectedField < fieldOffsets.size()) ? fieldOffsets[selectedField] : 0;
-    if (field.count > 1) {
-        fieldOffset += selectedArrayIndex * typeSz;
-    }
     for (int structIdx = 0; structIdx < numStructs; ++structIdx) {
-        int offset = structIdx * structSize + fieldOffset;
-        float value = 0.0f;
-        if (offset + typeSz <= size) {
-            const char* ptr = data + offset;
-            bool swap = endianness;
-            if (field.type == "int16_t") {
-                int16_t v = *reinterpret_cast<const int16_t*>(ptr);
-                if (swap) v = qFromLittleEndian(v);
-                value = static_cast<float>(v);
-            } else if (field.type == "uint16_t") {
-                uint16_t v = *reinterpret_cast<const uint16_t*>(ptr);
-                if (swap) v = qFromLittleEndian(v);
-                value = static_cast<float>(v);
-            } else if (field.type == "int32_t") {
-                int32_t v = *reinterpret_cast<const int32_t*>(ptr);
-                if (swap) v = qFromLittleEndian(v);
-                value = static_cast<float>(v);
-            } else if (field.type == "uint32_t") {
-                uint32_t v = *reinterpret_cast<const uint32_t*>(ptr);
-                if (swap) v = qFromLittleEndian(v);
-                value = static_cast<float>(v);
-            } else if (field.type == "float") {
-                float v = *reinterpret_cast<const float*>(ptr);
-                if (swap) v = qFromLittleEndian(v);
-                value = v;
-            } else if (field.type == "int64_t") {
-                int64_t v = *reinterpret_cast<const int64_t*>(ptr);
-                if (swap) v = qFromLittleEndian(v);
-                value = static_cast<float>(v);
-            } else if (field.type == "uint64_t") {
-                uint64_t v = *reinterpret_cast<const uint64_t*>(ptr);
-                if (swap) v = qFromLittleEndian(v);
-                value = static_cast<float>(v);
-            } else if (field.type == "double") {
-                double v = *reinterpret_cast<const double*>(ptr);
-                if (swap) v = qFromLittleEndian(v);
-                value = static_cast<float>(v);
-            } else if (field.type == "int8_t") {
-                value = static_cast<float>(*reinterpret_cast<const int8_t*>(ptr));
-            } else if (field.type == "uint8_t" || field.type == "char") {
-                value = static_cast<float>(*reinterpret_cast<const uint8_t*>(ptr));
-            }
-        }
-        values.append(value);
+        int offset = structIdx * structSize + selectedFieldOffset;
+        if (offset + selectedTypeSize > size) break;
+        values.append(converter(data + offset, endianness));
     }
 }
 
