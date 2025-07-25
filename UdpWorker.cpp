@@ -18,6 +18,31 @@ void UdpWorker::configure(const QString &structText_, const QList<FieldDef> &fie
     selectedField = selectedField_;
     selectedArrayIndex = selectedArrayIndex_;
     selectedFieldCount = selectedFieldCount_;
+
+    // Precompute field offsets
+    fieldOffsets.clear();
+    int offset = 0;
+    auto typeSize = [](const QString &type) -> int {
+        if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
+        if (type == "int16_t" || type == "uint16_t") return 2;
+        if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+        if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+        return 0;
+    };
+    auto typeAlignment = [](const QString &type) -> int {
+        if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+        if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+        if (type == "int16_t" || type == "uint16_t") return 2;
+        return 1;
+    };
+    for (int i = 0; i < fields.size(); ++i) {
+        int align = typeAlignment(fields[i].type);
+        int padding = (align - (offset % align)) % align;
+        offset += padding;
+        fieldOffsets.append(offset);
+        int sz = typeSize(fields[i].type);
+        offset += sz * fields[i].count;
+    }
 }
 
 void UdpWorker::updateConfig(const QString &structText_, const QList<FieldDef> &fields_, int structSize_, bool endianness_, int selectedField_, int selectedArrayIndex_, int selectedFieldCount_) {
@@ -96,24 +121,8 @@ void UdpWorker::parseDatagram(const QByteArray &datagram, QVector<float> &values
         if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
         return 0;
     };
-    auto typeAlignment = [](const QString &type) -> int {
-        if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
-        if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
-        if (type == "int16_t" || type == "uint16_t") return 2;
-        return 1;
-    };
-    int fieldOffset = 0;
-    for (int i = 0; i < selectedField; ++i) {
-        int sz = typeSize(fields[i].type);
-        int align = typeAlignment(fields[i].type);
-        int padding = (align - (fieldOffset % align)) % align;
-        fieldOffset += padding;
-        fieldOffset += sz * fields[i].count;
-    }
     int typeSz = typeSize(field.type);
-    int fieldAlign = typeAlignment(field.type);
-    int fieldPadding = (fieldAlign - (fieldOffset % fieldAlign)) % fieldAlign;
-    fieldOffset += fieldPadding;
+    int fieldOffset = (selectedField < fieldOffsets.size()) ? fieldOffsets[selectedField] : 0;
     if (field.count > 1) {
         fieldOffset += selectedArrayIndex * typeSz;
     }

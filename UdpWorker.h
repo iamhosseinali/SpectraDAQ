@@ -46,6 +46,7 @@ private:
     int selectedField = -1;
     int selectedArrayIndex = 0;
     int selectedFieldCount = 1;
+    QVector<int> fieldOffsets; // Precomputed offsets for each field
     void parseDatagram(const QByteArray &datagram, QVector<float> &values);
     LoggingManager* loggingManager = nullptr;
 }; 
