@@ -12,7 +12,8 @@ SOURCES += \
         mainwindow.cpp \
         CommandEditDialog.cpp \
         CustomCommandDialog.cpp \
-        LoggingManager.cpp
+        LoggingManager.cpp \
+        FieldExtract.cpp
 
 HEADERS += \
         mainwindow.h \

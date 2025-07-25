@@ -1,7 +1,10 @@
 #include "LoggingManager.h"
+#include "FieldDef.h"
 #include <QDateTime>
 #include <QDebug>
 #include <QThread>
+#include <QVariant>
+#include <vector>
 
 LoggingManager::LoggingManager(const QList<FieldDef>& fields, int structSize, int durationSec, const QString& filename, int bufferCapacity, QObject* parent)
     : QObject(parent),
@@ -91,13 +94,12 @@ void LoggingManager::writerThreadFunc() {
                 int nStructs = ba->size() / m_structSize;
                 for (int i = 0; i < nStructs; ++i) {
                     int offset = i * m_structSize;
-                    QString row;
-                    for (int j = 0; j < m_structSize; ++j) {
-                        if (j > 0) row += ",";
-                        row += QString::number(static_cast<unsigned char>((*ba)[offset + j]));
-                    }
-                    row += "\n";
-                    m_file.write(row.toUtf8());
+                    QByteArray structData = ba->mid(offset, m_structSize);
+                    auto values = extractFieldValues(structData, m_fields);
+                    QStringList row;
+                    for (const QVariant& v : values) row << v.toString();
+                    m_file.write(row.join(",").toUtf8());
+                    m_file.write("\n");
                 }
                 m_bytesWritten += ba->size();
             }
@@ -127,13 +129,12 @@ void LoggingManager::flushBuffer() {
         int nStructs = ptr->size() / m_structSize;
         for (int i = 0; i < nStructs; ++i) {
             int offset = i * m_structSize;
-            QString row;
-            for (int j = 0; j < m_structSize; ++j) {
-                if (j > 0) row += ",";
-                row += QString::number(static_cast<unsigned char>((*ptr)[offset + j]));
-            }
-            row += "\n";
-            m_file.write(row.toUtf8());
+            QByteArray structData = ptr->mid(offset, m_structSize);
+            auto values = extractFieldValues(structData, m_fields);
+            QStringList row;
+            for (const QVariant& v : values) row << v.toString();
+            m_file.write(row.join(",").toUtf8());
+            m_file.write("\n");
         }
         QMutexLocker locker(&m_poolMutex);
         m_packetPool.push_back(ptr);
