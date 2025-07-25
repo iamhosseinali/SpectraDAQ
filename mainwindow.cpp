@@ -34,8 +34,6 @@
 
 QT_CHARTS_USE_NAMESPACE
 
-const quint8 FS_COMM_IDF = 0x55;
-const quint8 FRQ_COMM_IDF = 0xAA;
 
 // Simple C struct parser
 QList<FieldDef> parseCStruct(const QString &structText) {
