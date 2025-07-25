@@ -37,6 +37,7 @@ void LoggingManager::start() {
     writeCsvHeader();
     m_bytesWritten = 0;
     m_writerThread = std::thread(&LoggingManager::writerThreadFunc, this);
+    // TODO: If using QThread, set priority to QThread::AboveNormalPriority
     m_timer->start(m_durationSec * 1000);
 }
 
@@ -55,6 +56,8 @@ bool LoggingManager::isRunning() const {
 bool LoggingManager::enqueuePacket(const QByteArray& packet) { return false; } // No-op now
 
 void LoggingManager::writerThreadFunc() {
+    QByteArray writeBuffer;
+    const int flushThreshold = 64 * 1024; // 64KB
     while (m_running) {
         QByteArray datagram;
         bool gotData = false;
@@ -68,13 +71,21 @@ void LoggingManager::writerThreadFunc() {
                     auto values = extractFieldValues(structView, m_fields);
                     QStringList row;
                     for (const QVariant& v : values) row << v.toString();
-                    m_file.write(row.join(",").toUtf8());
-                    m_file.write("\n");
+                    writeBuffer += row.join(",").toUtf8();
+                    writeBuffer += "\n";
                 }
                 m_bytesWritten += datagram.size();
             }
+            if (writeBuffer.size() > flushThreshold) {
+                m_file.write(writeBuffer);
+                writeBuffer.clear();
+            }
         } while (gotData);
         QThread::msleep(1);
+    }
+    if (!writeBuffer.isEmpty()) {
+        m_file.write(writeBuffer);
+        writeBuffer.clear();
     }
     m_file.flush();
 }
