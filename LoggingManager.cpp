@@ -63,9 +63,9 @@ void LoggingManager::writerThreadFunc() {
             if (gotData) {
                 int nStructs = datagram.size() / m_structSize;
                 for (int i = 0; i < nStructs; ++i) {
-                    int offset = i * m_structSize;
-                    QByteArray structData = datagram.mid(offset, m_structSize);
-                    auto values = extractFieldValues(structData, m_fields);
+                    const char* structPtr = datagram.constData() + i * m_structSize;
+                    QByteArray structView = QByteArray::fromRawData(structPtr, m_structSize);
+                    auto values = extractFieldValues(structView, m_fields);
                     QStringList row;
                     for (const QVariant& v : values) row << v.toString();
                     m_file.write(row.join(",").toUtf8());
