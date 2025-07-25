@@ -29,6 +29,8 @@
 #include <QInputDialog>
 #include <QFileDialog>
 #include "FieldDef.h"
+#include "UdpWorker.h"
+#include <QThread>
 
 QT_CHARTS_USE_NAMESPACE
 
@@ -74,8 +76,6 @@ T swapEndian(T u) {
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
-    , udpSocket(new QUdpSocket(this))
-    , updateTimer(new QTimer(this))
     , autoScaleYTimer(new QTimer(this))
     , plotUpdateTimer(new QTimer(this))
 {
@@ -124,12 +124,13 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::on_ipLineEdit_editingFinished);
     connect(ui->portSpinBox, &QSpinBox::editingFinished,
             this, &MainWindow::on_portSpinBox_editingFinished);
-    connect(udpSocket, &QUdpSocket::readyRead,
-            this, &MainWindow::readPendingDatagrams);
 
     // Initialize with default values
     daqPort = ui->portSpinBox->value();
-    initializeSocket();
+    // Remove old UDP socket and timer setup related to udpSocket and readPendingDatagrams
+    // Remove all references to udpSocket, initializeSocket, and readPendingDatagrams
+    // Remove connect(udpSocket, &QUdpSocket::readyRead, ...)
+    // Remove MainWindow::readPendingDatagrams definition
 
     // Chart setup
     QChart *chart = new QChart();
@@ -223,30 +224,41 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->refreshRateSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int hz){
         int interval = 1000 / std::max(1, hz);
         plotUpdateTimer->setInterval(interval);
+        qDebug() << "[UI] plotUpdateTimer interval set to" << interval << "ms for refresh rate" << hz;
     });
 
     updatePresetComboBox();
     updateCustomCommandsUI();
     connect(ui->logToCsvButton, &QPushButton::clicked, this, &MainWindow::on_logToCsvButton_clicked);
+
+    // --- UDP Worker Thread Setup ---
+    udpThread = new QThread(this);
+    udpWorker = new UdpWorker();
+    udpWorker->moveToThread(udpThread);
+    connect(udpThread, &QThread::finished, udpWorker, &QObject::deleteLater);
+    connect(this, &MainWindow::startUdp, udpWorker, &UdpWorker::start);
+    connect(this, &MainWindow::stopUdp, udpWorker, &UdpWorker::stop);
+    connect(this, &MainWindow::updateUdpConfig, udpWorker, &UdpWorker::updateConfig);
+    connect(udpWorker, &UdpWorker::dataReceived, this, &MainWindow::handleUdpData, Qt::QueuedConnection);
+    connect(this, &MainWindow::sendCustomDatagram, udpWorker, &UdpWorker::sendDatagram);
+    udpThread->start();
+    emit startUdp(ui->portSpinBox->value());
+
+    // Connect debugLogCheckBox toggled signal
+    connect(ui->debugLogCheckBox, &QCheckBox::toggled, this, [](bool checked){
+        MainWindow::setDebugLogEnabled(checked);
+    });
 }
 
 MainWindow::~MainWindow()
 {
+    emit stopUdp();
+    if (udpThread) {
+        udpThread->quit();
+        udpThread->wait();
+    }
     delete ui;
     autoScaleYTimer->stop();
-}
-
-void MainWindow::initializeSocket()
-{
-    udpSocket->close();
-    // Bind to the user-specified port for both sending and receiving
-    if (!udpSocket->bind(QHostAddress::AnyIPv4, daqPort, QUdpSocket::DefaultForPlatform)) {
-        ui->statusbar->showMessage(tr("Failed to bind UDP socket!"), 3000);
-        qDebug() << "Failed to bind UDP socket!";
-    } else {
-        ui->statusbar->showMessage(tr("UDP socket bound to port %1").arg(daqPort), 3000);
-        qDebug() << "UDP socket bound to port" << daqPort;
-    }
 }
 
 void MainWindow::on_ipLineEdit_editingFinished()
@@ -262,7 +274,7 @@ void MainWindow::on_ipLineEdit_editingFinished()
 void MainWindow::on_portSpinBox_editingFinished()
 {
     daqPort = static_cast<quint16>(ui->portSpinBox->value());
-    initializeSocket();
+    // Remove all calls to initializeSocket(); from this file
 }
 
 void MainWindow::sendCommand(quint8 commandId, quint32 value)
@@ -280,7 +292,7 @@ void MainWindow::sendCommand(quint8 commandId, quint32 value)
     quint32 leValue = qToLittleEndian(value);
     command.append(reinterpret_cast<const char*>(&leValue), sizeof(leValue));
 
-    udpSocket->writeDatagram(command, daqAddress, daqPort);
+    // udpSocket->writeDatagram(command, daqAddress, daqPort); // This line is removed
     ui->statusbar->showMessage(tr("Command %1 sent with value %2")
         .arg(commandId)
         .arg(value), 3000);
@@ -333,6 +345,23 @@ void MainWindow::on_parseStructButton_clicked()
         ui->fieldTableWidget->setItem(i, 3, new QTableWidgetItem(QString::number(fields[i].count)));
     }
     ui->fieldTableWidget->resizeColumnsToContents();
+    // After updating the table, emit updateUdpConfig
+    int selectedField = -1;
+    int selectedArrayIndex = 0;
+    int selectedFieldCount = 1;
+    for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
+        QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
+        if (item && item->checkState() == Qt::Checked) {
+            selectedField = row;
+            selectedFieldCount = ui->fieldTableWidget->item(row, 3)->text().toInt();
+            break;
+        }
+    }
+    if (selectedField >= 0 && selectedFieldCount > 1) {
+        selectedArrayIndex = ui->arrayIndexSpinBox->value();
+    }
+    bool endianness = ui->endiannessCheckBox->isChecked();
+    emit updateUdpConfig(structText, fields, structSize, endianness, selectedField, selectedArrayIndex, selectedFieldCount);
 }
 
 // Add FFT helper (Cooley-Tukey, radix-2, real input)
@@ -501,172 +530,6 @@ int MainWindow::getStructSize() {
     return structSize;
 }
 
-void MainWindow::readPendingDatagrams()
-{
-    static QList<FieldDef> lastParsedFields;
-    // Clear cache if struct changed
-    static QString lastStructText;
-    QString currentStructText = ui->structTextEdit->toPlainText();
-    if (currentStructText != lastStructText) {
-        lastParsedFields = parseCStruct(currentStructText);
-        lastStructText = currentStructText;
-    }
-    int structSize = getStructSize();
-    // Find selected field
-    int selectedField = -1;
-    for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
-        QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
-        if (item && item->checkState() == Qt::Checked) {
-            selectedField = row;
-            break;
-        }
-    }
-    // If no field is selected, just clear the datagrams and return
-    if (selectedField == -1) {
-        while (udpSocket->hasPendingDatagrams()) {
-            udpSocket->readDatagram(nullptr, 0); // Discard
-        }
-        return;
-    }
-    while (udpSocket->hasPendingDatagrams()) {
-        QByteArray datagram;
-        datagram.resize(int(udpSocket->pendingDatagramSize()));
-        QHostAddress sender;
-        quint16 senderPort;
-        udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
-        // Logging mode: buffer packets only
-        if (loggingManager && loggingManager->isRunning()) {
-            loggingManager->enqueuePacket(datagram);
-            continue;
-        }
-        if (ui->debugLogCheckBox->isChecked()) qDebug() << "Received datagram of size" << datagram.size();
-        if (datagram.size() > 0 && structSize > 0) {
-            int selectedFieldCount = 1;
-            for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
-                QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
-                if (!item) {
-                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "TableWidget item is null at row" << row;
-                    continue;
-                }
-                if (item->checkState() == Qt::Checked) {
-                    selectedFieldCount = ui->fieldTableWidget->item(row, 3)->text().toInt();
-                    break;
-                }
-            }
-            int selectedArrayIndex = 0;
-            if (selectedFieldCount > 1) {
-                selectedArrayIndex = ui->arrayIndexSpinBox->value();
-            }
-            bool fftEnabled = ui->applyFftCheckBox->isChecked();
-            int fftLen = ui->fftLengthSpinBox->value();
-            if (selectedField >= 0) {
-                // Calculate field offset within struct as before
-                auto typeSize = [](const QString &type) -> int {
-                    if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
-                    if (type == "int16_t" || type == "uint16_t") return 2;
-                    if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
-                    if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
-                    return 0;
-                };
-                auto typeAlignment = [](const QString &type) -> int {
-                    if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
-                    if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
-                    if (type == "int16_t" || type == "uint16_t") return 2;
-                    return 1;
-                };
-                int fieldOffset = 0;
-                for (int i = 0; i < selectedField; ++i) {
-                    QString fieldType = ui->fieldTableWidget->item(i, 1)->text();
-                    int fieldCount = ui->fieldTableWidget->item(i, 3)->text().toInt();
-                    int sz = typeSize(fieldType);
-                    int align = typeAlignment(fieldType);
-                    int padding = (align - (fieldOffset % align)) % align;
-                    fieldOffset += padding;
-                    fieldOffset += sz * fieldCount;
-                }
-                QString type = ui->fieldTableWidget->item(selectedField, 1)->text();
-                int typeSz = typeSize(type);
-                int fieldAlign = typeAlignment(type);
-                int fieldPadding = (fieldAlign - (fieldOffset % fieldAlign)) % fieldAlign;
-                fieldOffset += fieldPadding;
-                if (selectedFieldCount > 1) {
-                    fieldOffset += selectedArrayIndex * typeSz;
-                }
-                int numStructs = datagram.size() / structSize;
-                for (int structIdx = 0; structIdx < numStructs; ++structIdx) {
-                    int offset = structIdx * structSize + fieldOffset;
-                    float value = 0.0f;
-                    if (offset + typeSz <= datagram.size()) {
-                        const char* ptr = datagram.constData() + offset;
-                        bool swap = ui->endiannessCheckBox->isChecked();
-                        if (type == "int16_t") {
-                            int16_t v = *reinterpret_cast<const int16_t*>(ptr);
-                            if (swap) v = swapEndian(v);
-                            value = static_cast<float>(v);
-                        } else if (type == "uint16_t") {
-                            uint16_t v = *reinterpret_cast<const uint16_t*>(ptr);
-                            if (swap) v = swapEndian(v);
-                            value = static_cast<float>(v);
-                        } else if (type == "int32_t") {
-                            int32_t v = *reinterpret_cast<const int32_t*>(ptr);
-                            if (swap) v = swapEndian(v);
-                            value = static_cast<float>(v);
-                        } else if (type == "uint32_t") {
-                            uint32_t v = *reinterpret_cast<const uint32_t*>(ptr);
-                            if (swap) v = swapEndian(v);
-                            value = static_cast<float>(v);
-                        } else if (type == "float") {
-                            float v = *reinterpret_cast<const float*>(ptr);
-                            if (swap) v = swapEndian(v);
-                            value = v;
-                        } else if (type == "int64_t") {
-                            int64_t v = *reinterpret_cast<const int64_t*>(ptr);
-                            if (swap) v = swapEndian(v);
-                            value = static_cast<float>(v);
-                        } else if (type == "uint64_t") {
-                            uint64_t v = *reinterpret_cast<const uint64_t*>(ptr);
-                            if (swap) v = swapEndian(v);
-                            value = static_cast<float>(v);
-                        } else if (type == "double") {
-                            double v = *reinterpret_cast<const double*>(ptr);
-                            if (swap) v = swapEndian(v);
-                            value = static_cast<float>(v);
-                        } else if (type == "int8_t") {
-                            value = static_cast<float>(*reinterpret_cast<const int8_t*>(ptr));
-                        } else if (type == "uint8_t" || type == "char") {
-                            value = static_cast<float>(*reinterpret_cast<const uint8_t*>(ptr));
-                        }
-                    }
-                    if (ui->debugLogCheckBox->isChecked()) {
-                        qDebug() << "Struct:" << structIdx << "Offset:" << offset << "Value:" << value << "Sample Index:" << sampleIndex;
-                    }
-                    if (fftEnabled) {
-                        fftBuffer.push_back(value);
-                        if ((int)fftBuffer.size() >= fftLen) {
-                            fftBuffer.resize(fftLen);
-                            processFftAndPlot();
-                        }
-                    } else {
-                        if (valueHistory.size() >= xDiv) valueHistory.pop_front();
-                        valueHistory.append(QPointF(sampleIndex++, value));
-                        // No need to reindex X, as sampleIndex is always increasing
-                        // Plotting is now handled by updatePlot()
-                    }
-                }
-            }
-        }
-        else if (datagram.size() == 1) {
-            quint8 ack = static_cast<quint8>(datagram[0]);
-            if (ack == FS_COMM_IDF) {
-                ui->statusbar->showMessage("Fs set successfully", 3000);
-            }
-            else if (ack == FRQ_COMM_IDF) {
-                ui->statusbar->showMessage("Frequency set successfully", 3000);
-            }
-        }
-    }
-}
-
 void MainWindow::on_fieldTableWidget_itemChanged(QTableWidgetItem *item)
 {
     if (item->column() == 0 && item->checkState() == Qt::Checked) {
@@ -697,6 +560,30 @@ void MainWindow::on_fieldTableWidget_itemChanged(QTableWidgetItem *item)
         // Reset sample index and value history when changing field
         sampleIndex = 0;
         valueHistory.clear();
+        // Emit updateUdpConfig
+        QString structText = ui->structTextEdit->toPlainText();
+        QList<FieldDef> fields = parseCStruct(structText);
+        int structSize = 0;
+        auto typeSize = [](const QString &type) -> int {
+            if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
+            if (type == "int16_t" || type == "uint16_t") return 2;
+            if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+            if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+            return 0;
+        };
+        for (const FieldDef &field : fields) {
+            int sz = typeSize(field.type);
+            if (sz == 0) continue;
+            structSize += sz * field.count;
+        }
+        int selectedField = selectedRow;
+        int selectedArrayIndex = 0;
+        int selectedFieldCount = count;
+        if (selectedFieldCount > 1) {
+            selectedArrayIndex = ui->arrayIndexSpinBox->value();
+        }
+        bool endianness = ui->endiannessCheckBox->isChecked();
+        emit updateUdpConfig(structText, fields, structSize, endianness, selectedField, selectedArrayIndex, selectedFieldCount);
     }
 }
 
@@ -724,6 +611,31 @@ void MainWindow::updatePlot() {
     if (axisY && !ui->autoScaleYCheckBox->isChecked()) {
         axisY->setRange(-yDiv, yDiv);
     }
+}
+
+void MainWindow::handleUdpData(QVector<float> values) {
+    // Check if a field is selected
+    int selectedField = -1;
+    for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
+        QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
+        if (item && item->checkState() == Qt::Checked) {
+            selectedField = row;
+            break;
+        }
+    }
+    if (selectedField == -1) {
+        if (ui->debugLogCheckBox->isChecked()) qDebug() << "[handleUdpData] No field selected, clearing plot.";
+        valueHistory.clear();
+        auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
+        series->clear();
+        return;
+    }
+    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[handleUdpData] Received values for field" << selectedField << ":" << values;
+    for (float value : values) {
+        if (valueHistory.size() >= xDiv) valueHistory.pop_front();
+        valueHistory.append(QPointF(sampleIndex++, value));
+    }
+    // Do not call updatePlot() here; let plotUpdateTimer control refresh
 }
 
 // Helper: collect all UI state into a QJsonObject
@@ -1012,13 +924,8 @@ void MainWindow::updateCustomCommandsUI() {
                 if (!addr.isNull()) {
                     qDebug() << "daqAddress:" << addr << "daqPort:" << port;
                     qDebug() << "Custom spinbox command send:" << ba.toHex();
-                    qint64 sent = udpSocket->writeDatagram(ba, addr, port);
-                    qDebug() << "writeDatagram returned:" << sent << "error:" << udpSocket->errorString();
-                    if (sent == -1) {
-                        ui->statusbar->showMessage("Failed to send custom command!", 3000);
-                    } else {
-                        ui->statusbar->showMessage(QString("Command '%1' sent").arg(cmd["name"].toString()), 3000);
-                    }
+                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[MainWindow] Emitting sendCustomDatagram" << ba.toHex() << addr << port;
+                    emit sendCustomDatagram(ba, addr, port);
                 }
             });
         } else if (type == "button") {
@@ -1041,13 +948,8 @@ void MainWindow::updateCustomCommandsUI() {
                 if (!addr.isNull()) {
                     qDebug() << "daqAddress:" << addr << "daqPort:" << port;
                     qDebug() << "Custom button command send:" << ba.toHex();
-                    qint64 sent = udpSocket->writeDatagram(ba, addr, port);
-                    qDebug() << "writeDatagram returned:" << sent << "error:" << udpSocket->errorString();
-                    if (sent == -1) {
-                        ui->statusbar->showMessage("Failed to send custom command!", 3000);
-                    } else {
-                        ui->statusbar->showMessage(QString("Command '%1' sent").arg(cmd["name"].toString()), 3000);
-                    }
+                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[MainWindow] Emitting sendCustomDatagram" << ba.toHex() << addr << port;
+                    emit sendCustomDatagram(ba, addr, port);
                 }
             });
         }
@@ -1059,9 +961,7 @@ void MainWindow::updateCustomCommandsUI() {
 
 void MainWindow::on_logToCsvButton_clicked() {
     ui->logToCsvButton->setEnabled(false);
-    ui->logToCsvButton->clearFocus(); // Prevent focus-triggered re-entry
-    // Optionally: ui->structTextEdit->setFocus();
-    // Create and show duration input dialog
+    ui->logToCsvButton->clearFocus();
     QInputDialog durationDialog(this);
     durationDialog.setWindowTitle("Log Duration");
     durationDialog.setLabelText("Enter duration (seconds):");
@@ -1074,9 +974,8 @@ void MainWindow::on_logToCsvButton_clicked() {
         return;
     }
     int duration = durationDialog.intValue();
-    durationDialog.close();  // Explicitly close the dialog
+    durationDialog.close();
 
-    // Create and show file dialog
     QFileDialog fileDialog(this);
     fileDialog.setAcceptMode(QFileDialog::AcceptSave);
     fileDialog.setDefaultSuffix("csv");
@@ -1086,9 +985,8 @@ void MainWindow::on_logToCsvButton_clicked() {
         return;
     }
     QString filename = fileDialog.selectedFiles().first();
-    fileDialog.close();  // Explicitly close the dialog
+    fileDialog.close();
 
-    // Parse struct fields
     QString structText = ui->structTextEdit->toPlainText();
     QList<FieldDef> fields = parseCStruct(structText);
     int structSize = getStructSize();
@@ -1098,30 +996,109 @@ void MainWindow::on_logToCsvButton_clicked() {
         return;
     }
 
-    // Stop all timers/UI/plotting
     if (autoScaleYTimer) autoScaleYTimer->stop();
     if (plotUpdateTimer) plotUpdateTimer->stop();
     for (auto w : findChildren<QWidget*>()) w->setEnabled(false);
     ui->statusbar->showMessage("Logging in progress...", 0);
 
-    // Create and start LoggingManager
-    if (loggingManager) { 
-        delete loggingManager; 
-        loggingManager = nullptr; 
-    }
-    loggingManager = new LoggingManager(fields, structSize, duration, filename);
-    connect(loggingManager, &LoggingManager::loggingFinished, this, [this]() {
+    // Start logging in the worker thread
+    QMetaObject::invokeMethod(udpWorker, "startLogging", Qt::QueuedConnection,
+        Q_ARG(QList<FieldDef>, fields),
+        Q_ARG(int, structSize),
+        Q_ARG(int, duration),
+        Q_ARG(QString, filename));
+    connect(udpWorker, &UdpWorker::loggingFinished, this, [this]() {
         for (auto w : findChildren<QWidget*>()) w->setEnabled(true);
-        ui->logToCsvButton->setEnabled(true); // Re-enable after logging
+        ui->logToCsvButton->setEnabled(true);
         if (autoScaleYTimer) autoScaleYTimer->start();
         if (plotUpdateTimer) plotUpdateTimer->start();
         ui->statusbar->showMessage("Logging finished.", 3000);
     });
-    connect(loggingManager, &LoggingManager::loggingError, this, [this](const QString& msg) {
+    connect(udpWorker, &UdpWorker::loggingError, this, [this](const QString& msg) {
         QMessageBox::critical(this, "Logging Error", msg);
         for (auto w : findChildren<QWidget*>()) w->setEnabled(true);
         ui->logToCsvButton->setEnabled(true);
     });
-    loggingManager->start();
+}
+
+void MainWindow::on_arrayIndexSpinBox_valueChanged(int value)
+{
+    QString structText = ui->structTextEdit->toPlainText();
+    QList<FieldDef> fields = parseCStruct(structText);
+    int structSize = 0;
+    auto typeSize = [](const QString &type) -> int {
+        if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
+        if (type == "int16_t" || type == "uint16_t") return 2;
+        if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+        if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+        return 0;
+    };
+    for (const FieldDef &field : fields) {
+        int sz = typeSize(field.type);
+        if (sz == 0) continue;
+        structSize += sz * field.count;
+    }
+    int selectedField = -1;
+    int selectedArrayIndex = 0;
+    int selectedFieldCount = 1;
+    for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
+        QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
+        if (item && item->checkState() == Qt::Checked) {
+            selectedField = row;
+            selectedFieldCount = ui->fieldTableWidget->item(row, 3)->text().toInt();
+            break;
+        }
+    }
+    if (selectedField >= 0 && selectedFieldCount > 1) {
+        selectedArrayIndex = value;
+    }
+    bool endianness = ui->endiannessCheckBox->isChecked();
+    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[UI] updateUdpConfig (arrayIndex changed):" << structText << structSize << endianness << selectedField << selectedArrayIndex << selectedFieldCount;
+    emit updateUdpConfig(structText, fields, structSize, endianness, selectedField, selectedArrayIndex, selectedFieldCount);
+    if (selectedField == -1) {
+        valueHistory.clear();
+        auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
+        series->clear();
+    }
+}
+
+void MainWindow::on_endiannessCheckBox_toggled(bool checked) {
+    QString structText = ui->structTextEdit->toPlainText();
+    QList<FieldDef> fields = parseCStruct(structText);
+    int structSize = 0;
+    auto typeSize = [](const QString &type) -> int {
+        if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
+        if (type == "int16_t" || type == "uint16_t") return 2;
+        if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
+        if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
+        return 0;
+    };
+    for (const FieldDef &field : fields) {
+        int sz = typeSize(field.type);
+        if (sz == 0) continue;
+        structSize += sz * field.count;
+    }
+    int selectedField = -1;
+    int selectedArrayIndex = 0;
+    int selectedFieldCount = 1;
+    for (int row = 0; row < ui->fieldTableWidget->rowCount(); ++row) {
+        QTableWidgetItem *item = ui->fieldTableWidget->item(row, 0);
+        if (item && item->checkState() == Qt::Checked) {
+            selectedField = row;
+            selectedFieldCount = ui->fieldTableWidget->item(row, 3)->text().toInt();
+            break;
+        }
+    }
+    if (selectedField >= 0 && selectedFieldCount > 1) {
+        selectedArrayIndex = ui->arrayIndexSpinBox->value();
+    }
+    bool endianness = checked;
+    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[UI] updateUdpConfig (endianness changed):" << structText << structSize << endianness << selectedField << selectedArrayIndex << selectedFieldCount;
+    emit updateUdpConfig(structText, fields, structSize, endianness, selectedField, selectedArrayIndex, selectedFieldCount);
+}
+
+bool MainWindow::debugLogEnabled = false;
+void MainWindow::setDebugLogEnabled(bool enabled) {
+    debugLogEnabled = enabled;
 }
 

@@ -13,13 +13,15 @@ SOURCES += \
         CommandEditDialog.cpp \
         CustomCommandDialog.cpp \
         LoggingManager.cpp \
-        FieldExtract.cpp
+        FieldExtract.cpp \
+        UdpWorker.cpp
 
 HEADERS += \
         mainwindow.h \
         CustomCommandDialog.h \
         LoggingManager.h \
-        CommandEditDialog.h
+        CommandEditDialog.h \
+        UdpWorker.h
 
 FORMS += \
         mainwindow.ui

@@ -12,23 +12,27 @@
 #include <complex>
 #include <QJsonObject>
 #include <QDialog>
+#include "UdpWorker.h"
+#include <QThread>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
 class LoggingManager; // Forward declaration
+class UdpWorker;
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
+    static bool debugLogEnabled;
+    static void setDebugLogEnabled(bool enabled);
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
 private slots:
-    void readPendingDatagrams();
     void on_ipLineEdit_editingFinished();
     void on_portSpinBox_editingFinished();
     void on_parseStructButton_clicked();
@@ -43,11 +47,18 @@ private slots:
     void on_presetComboBox_currentIndexChanged(int index);
     void on_editCommandsButton_clicked();
     void on_logToCsvButton_clicked();
+    void handleUdpData(QVector<float> values);
+    void on_arrayIndexSpinBox_valueChanged(int value);
+    void on_endiannessCheckBox_toggled(bool checked);
+
+signals:
+    void startUdp(quint16 port);
+    void stopUdp();
+    void updateUdpConfig(const QString &structText, const QList<FieldDef> &fields, int structSize, bool endianness, int selectedField, int selectedArrayIndex, int selectedFieldCount);
+    void sendCustomDatagram(const QByteArray &data, const QHostAddress &addr, quint16 port);
 
 private:
     Ui::MainWindow *ui;
-    QUdpSocket *udpSocket;
-    QTimer *updateTimer;
     QHostAddress daqAddress;
     quint16 daqPort;
     int packetLength;
@@ -61,7 +72,6 @@ private:
     void plotFftData(const std::vector<float> &fftResult);
     std::vector<float> computeFft(const std::vector<float> &data);
 
-    void initializeSocket();
     void parseAndPlotData(const QByteArray &data);
     void sendCommand(quint8 commandId, quint32 value);
 
@@ -90,6 +100,9 @@ private:
     void showCustomCommandDialog();
     void updateCustomCommandsUI();
     LoggingManager* loggingManager = nullptr;
+
+    QThread *udpThread = nullptr;
+    UdpWorker *udpWorker = nullptr;
 };
 
 #endif // MAINWINDOW_H
