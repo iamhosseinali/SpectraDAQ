@@ -240,6 +240,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(udpWorker, &UdpWorker::dataReceived, this, &MainWindow::handleUdpData, Qt::QueuedConnection);
     connect(this, &MainWindow::sendCustomDatagram, udpWorker, &UdpWorker::sendDatagram);
     udpThread->start();
+    udpThread->setPriority(QThread::HighPriority); // Set UDP thread to high priority
     emit startUdp(ui->portSpinBox->value());
 
     // Connect debugLogCheckBox toggled signal
