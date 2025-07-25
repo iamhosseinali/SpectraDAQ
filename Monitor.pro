@@ -17,6 +17,7 @@ SOURCES += \
 HEADERS += \
         mainwindow.h \
         CustomCommandDialog.h \
+        LoggingManager.h \
         CommandEditDialog.h
 
 FORMS += \
