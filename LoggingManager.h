@@ -17,10 +17,12 @@
 #include <vector>
 #include "FieldDef.h"
 
+class UdpWorker; // Forward declaration
+
 class LoggingManager : public QObject {
     Q_OBJECT
 public:
-    LoggingManager(const QList<FieldDef>& fields, int structSize, int durationSec, const QString& filename, int bufferCapacity = 1 << 20, QObject* parent = nullptr);
+    LoggingManager(const QList<FieldDef>& fields, int structSize, int durationSec, const QString& filename, UdpWorker* udpWorker, QObject* parent = nullptr);
     ~LoggingManager();
 
     // Called from UDP receive thread
@@ -51,11 +53,7 @@ private:
     QAtomicInt m_bytesWritten;
     QTimer* m_timer;
 
-    // Lock-free queue for raw packets
-    boost::lockfree::spsc_queue<QByteArray*, boost::lockfree::capacity<1 << 20>> m_queue;
-    std::vector<QByteArray*> m_packetPool;
-    QMutex m_poolMutex;
-    QWaitCondition m_poolCond;
+    UdpWorker* m_udpWorker = nullptr;
 };
 
 #endif // LOGGINGMANAGER_H

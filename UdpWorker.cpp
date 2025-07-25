@@ -4,7 +4,9 @@
 #include <algorithm>
 #include "mainwindow.h"
 
-UdpWorker::UdpWorker(QObject *parent) : QObject(parent) {}
+UdpWorker::UdpWorker(QObject *parent) : QObject(parent) {
+    ringBuffer.resize(RING_BUFFER_SIZE);
+}
 
 UdpWorker::~UdpWorker() {
     stop();
@@ -79,7 +81,7 @@ void UdpWorker::startLogging(const QList<FieldDef>& fields, int structSize, int 
         delete loggingManager;
         loggingManager = nullptr;
     }
-    loggingManager = new LoggingManager(fields, structSize, durationSec, filename);
+    loggingManager = new LoggingManager(fields, structSize, durationSec, filename, this);
     connect(loggingManager, &LoggingManager::loggingFinished, this, &UdpWorker::loggingFinished);
     connect(loggingManager, &LoggingManager::loggingError, this, &UdpWorker::loggingError);
     loggingManager->start();
@@ -93,12 +95,32 @@ void UdpWorker::stopLogging() {
     }
 }
 
+void UdpWorker::pushToRingBuffer(const QByteArray& datagram) {
+    int currentHead = ringHead.load(std::memory_order_relaxed);
+    int nextHead = (currentHead + 1) % RING_BUFFER_SIZE;
+    if (nextHead != ringTail.load(std::memory_order_acquire)) { // Not full
+        ringBuffer[currentHead] = datagram;
+        ringHead.store(nextHead, std::memory_order_release);
+    } else {
+        // Buffer full: drop or overwrite policy (currently drop)
+        // Optionally count drops for diagnostics
+    }
+}
+
+bool UdpWorker::popFromRingBuffer(QByteArray& datagram) {
+    int currentTail = ringTail.load(std::memory_order_relaxed);
+    if (currentTail == ringHead.load(std::memory_order_acquire)) {
+        return false; // Empty
+    }
+    datagram = ringBuffer[currentTail];
+    ringTail.store((currentTail + 1) % RING_BUFFER_SIZE, std::memory_order_release);
+    return true;
+}
+
 void UdpWorker::processPendingDatagrams() {
     if (!running || !udpSocket) return;
 
-    QVector<float> allValues; // Collect all values from all datagrams in this batch
-
-    // Batch: read all datagrams first
+    QVector<float> allValues;
     QVector<QByteArray> datagrams;
     while (udpSocket->hasPendingDatagrams() && running) {
         qint64 size = udpSocket->pendingDatagramSize();
@@ -106,14 +128,11 @@ void UdpWorker::processPendingDatagrams() {
         udpSocket->readDatagram(datagrams.last().data(), size);
     }
 
-    // Batch: parse all datagrams
     for (const QByteArray& datagram : datagrams) {
         QVector<float> values;
         parseDatagram(datagram, values);
-        allValues += values; // Append all values
-        if (loggingManager && loggingManager->isRunning()) {
-            loggingManager->enqueuePacket(datagram); // Still log each datagram
-        }
+        allValues += values;
+        pushToRingBuffer(datagram); // Use ring buffer for logging
     }
 
     if (!allValues.isEmpty()) {

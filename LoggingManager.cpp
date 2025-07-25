@@ -5,31 +5,26 @@
 #include <QThread>
 #include <QVariant>
 #include <vector>
+#include "UdpWorker.h"
 
-LoggingManager::LoggingManager(const QList<FieldDef>& fields, int structSize, int durationSec, const QString& filename, int bufferCapacity, QObject* parent)
+LoggingManager::LoggingManager(const QList<FieldDef>& fields, int structSize, int durationSec, const QString& filename, UdpWorker* udpWorker, QObject* parent)
     : QObject(parent),
       m_fields(fields),
       m_structSize(structSize),
       m_durationSec(durationSec),
       m_filename(filename),
       m_running(false),
-      m_queue(),
+      m_udpWorker(udpWorker),
       m_bytesWritten(0)
 {
     m_file.setFileName(m_filename);
     m_timer = new QTimer(this);
     m_timer->setSingleShot(true);
     connect(m_timer, &QTimer::timeout, this, &LoggingManager::stop);
-    // Pre-allocate packet pool
-    m_packetPool.reserve(bufferCapacity);
-    for (int i = 0; i < bufferCapacity; ++i) {
-        m_packetPool.push_back(new QByteArray());
-    }
 }
 
 LoggingManager::~LoggingManager() {
     stop();
-    for (auto ptr : m_packetPool) delete ptr;
 }
 
 void LoggingManager::start() {
@@ -57,59 +52,31 @@ bool LoggingManager::isRunning() const {
     return m_running;
 }
 
-bool LoggingManager::enqueuePacket(const QByteArray& packet) {
-    if (!m_running) return false;
-    QByteArray* buf = nullptr;
-    {
-        QMutexLocker locker(&m_poolMutex);
-        if (!m_packetPool.empty()) {
-            buf = m_packetPool.back();
-            m_packetPool.pop_back();
-        }
-    }
-    if (!buf) return false; // Pool exhausted
-    *buf = packet;
-    if (!m_queue.push(buf)) {
-        // Buffer full, drop packet
-        QMutexLocker locker(&m_poolMutex);
-        m_packetPool.push_back(buf);
-        return false;
-    }
-    return true;
-}
+bool LoggingManager::enqueuePacket(const QByteArray& packet) { return false; } // No-op now
 
 void LoggingManager::writerThreadFunc() {
-    std::vector<QByteArray*> batch;
-    batch.reserve(1024);
-    while (m_running || !m_queue.empty()) {
-        batch.clear();
-        QByteArray* ptr = nullptr;
-        while (m_queue.pop(ptr)) {
-            batch.push_back(ptr);
-            if (batch.size() >= 1024) break;
-        }
-        if (!batch.empty()) {
-            // Write batch to file
-            for (QByteArray* ba : batch) {
-                int nStructs = ba->size() / m_structSize;
+    while (m_running) {
+        QByteArray datagram;
+        bool gotData = false;
+        do {
+            gotData = m_udpWorker && m_udpWorker->popFromRingBuffer(datagram);
+            if (gotData) {
+                int nStructs = datagram.size() / m_structSize;
                 for (int i = 0; i < nStructs; ++i) {
                     int offset = i * m_structSize;
-                    QByteArray structData = ba->mid(offset, m_structSize);
+                    QByteArray structData = datagram.mid(offset, m_structSize);
                     auto values = extractFieldValues(structData, m_fields);
                     QStringList row;
                     for (const QVariant& v : values) row << v.toString();
                     m_file.write(row.join(",").toUtf8());
                     m_file.write("\n");
                 }
-                m_bytesWritten += ba->size();
+                m_bytesWritten += datagram.size();
             }
-            m_file.flush();
-            QMutexLocker locker(&m_poolMutex);
-            for (QByteArray* ba : batch) m_packetPool.push_back(ba);
-        } else {
-            QThread::msleep(1);
-        }
+        } while (gotData);
+        QThread::msleep(1);
     }
+    m_file.flush();
 }
 
 void LoggingManager::writeCsvHeader() {
@@ -124,20 +91,6 @@ void LoggingManager::writeCsvHeader() {
 }
 
 void LoggingManager::flushBuffer() {
-    QByteArray* ptr = nullptr;
-    while (m_queue.pop(ptr)) {
-        int nStructs = ptr->size() / m_structSize;
-        for (int i = 0; i < nStructs; ++i) {
-            int offset = i * m_structSize;
-            QByteArray structData = ptr->mid(offset, m_structSize);
-            auto values = extractFieldValues(structData, m_fields);
-            QStringList row;
-            for (const QVariant& v : values) row << v.toString();
-            m_file.write(row.join(",").toUtf8());
-            m_file.write("\n");
-        }
-        QMutexLocker locker(&m_poolMutex);
-        m_packetPool.push_back(ptr);
-    }
+    // No-op: all data is drained in writerThreadFunc
     m_file.flush();
 }

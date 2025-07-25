@@ -6,6 +6,8 @@
 #include "FieldDef.h"
 #include "mainwindow.h"
 #include "LoggingManager.h"
+#include <atomic>
+#include <vector>
 
 class UdpWorker : public QObject {
     Q_OBJECT
@@ -14,6 +16,8 @@ public:
     ~UdpWorker();
 
     void configure(const QString &structText, const QList<FieldDef> &fields, int structSize, bool endianness, int selectedField, int selectedArrayIndex, int selectedFieldCount);
+    void pushToRingBuffer(const QByteArray& datagram);
+    bool popFromRingBuffer(QByteArray& datagram);
 
 public slots:
     void start(quint16 port);
@@ -49,4 +53,8 @@ private:
     QVector<int> fieldOffsets; // Precomputed offsets for each field
     void parseDatagram(const QByteArray &datagram, QVector<float> &values);
     LoggingManager* loggingManager = nullptr;
+    static constexpr int RING_BUFFER_SIZE = 1024;
+    std::vector<QByteArray> ringBuffer;
+    std::atomic<int> ringHead{0};
+    std::atomic<int> ringTail{0};
 }; 
