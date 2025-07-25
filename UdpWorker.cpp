@@ -23,6 +23,8 @@ void UdpWorker::configure(const QString &structText_, const QList<FieldDef> &fie
 
     // Precompute field offsets
     fieldOffsets.clear();
+    fieldSizes.clear();
+    fieldAlignments.clear();
     int offset = 0;
     auto typeSize = [](const QString &type) -> int {
         if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
@@ -39,10 +41,12 @@ void UdpWorker::configure(const QString &structText_, const QList<FieldDef> &fie
     };
     for (int i = 0; i < fields.size(); ++i) {
         int align = typeAlignment(fields[i].type);
+        int sz = typeSize(fields[i].type);
         int padding = (align - (offset % align)) % align;
         offset += padding;
         fieldOffsets.append(offset);
-        int sz = typeSize(fields[i].type);
+        fieldSizes.append(sz);
+        fieldAlignments.append(align);
         offset += sz * fields[i].count;
     }
 }
@@ -149,14 +153,7 @@ void UdpWorker::parseDatagram(const QByteArray &datagram, QVector<float> &values
     if (structSize <= 0 || selectedField < 0 || selectedField >= fields.size()) return;
     int numStructs = datagram.size() / structSize;
     const FieldDef &field = fields[selectedField];
-    auto typeSize = [](const QString &type) -> int {
-        if (type == "int8_t" || type == "uint8_t" || type == "char") return 1;
-        if (type == "int16_t" || type == "uint16_t") return 2;
-        if (type == "int32_t" || type == "uint32_t" || type == "float") return 4;
-        if (type == "int64_t" || type == "uint64_t" || type == "double") return 8;
-        return 0;
-    };
-    int typeSz = typeSize(field.type);
+    int typeSz = (selectedField < fieldSizes.size()) ? fieldSizes[selectedField] : 0;
     int fieldOffset = (selectedField < fieldOffsets.size()) ? fieldOffsets[selectedField] : 0;
     if (field.count > 1) {
         fieldOffset += selectedArrayIndex * typeSz;

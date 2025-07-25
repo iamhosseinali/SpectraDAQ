@@ -51,6 +51,8 @@ private:
     int selectedArrayIndex = 0;
     int selectedFieldCount = 1;
     QVector<int> fieldOffsets; // Precomputed offsets for each field
+    QVector<int> fieldSizes;      // Precomputed sizes for each field
+    QVector<int> fieldAlignments; // Precomputed alignments for each field
     void parseDatagram(const QByteArray &datagram, QVector<float> &values);
     LoggingManager* loggingManager = nullptr;
     static constexpr int RING_BUFFER_SIZE = 1024;
