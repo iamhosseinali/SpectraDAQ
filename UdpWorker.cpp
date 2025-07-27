@@ -298,8 +298,15 @@ void UdpWorker::startLogging(const QList<FieldDef>& fields, int structSize, int 
         loggingManager = nullptr;
     }
     loggingManager = new LoggingManager(fields, structSize, durationSec, filename, this);
+    
+    // Enable binary mode if it was previously enabled
+    if (binaryLoggingEnabled) {
+        loggingManager->enableBinaryMode(true);
+    }
+    
     connect(loggingManager, &LoggingManager::loggingFinished, this, &UdpWorker::loggingFinished);
     connect(loggingManager, &LoggingManager::loggingError, this, &UdpWorker::loggingError);
+    connect(loggingManager, &LoggingManager::conversionFinished, this, &UdpWorker::conversionFinished);
     loggingManager->start();
 }
 
@@ -312,11 +319,23 @@ void UdpWorker::stopLogging() {
 }
 
 void UdpWorker::enableBinaryLogging(bool enable) {
+    binaryLoggingEnabled = enable;  // Store the state
     if (loggingManager) {
         loggingManager->enableBinaryMode(enable);
 #ifdef ENABLE_DEBUG
         qDebug() << "[UdpWorker] Binary logging mode" << (enable ? "enabled" : "disabled");
 #endif
+    }
+}
+
+void UdpWorker::convertBinaryToCSV(const QString& binaryFile, const QString& csvFile) {
+    if (loggingManager) {
+        loggingManager->convertBinaryToCSV(binaryFile, csvFile);
+#ifdef ENABLE_DEBUG
+        qDebug() << "[UdpWorker] Converting binary file to CSV:" << binaryFile << "->" << csvFile;
+#endif
+    } else {
+        qWarning() << "[UdpWorker] No logging manager available for conversion";
     }
 }
 

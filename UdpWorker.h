@@ -40,6 +40,7 @@ public slots:
     void startLogging(const QList<FieldDef>& fields, int structSize, int durationSec, const QString& filename);
     void stopLogging();
     void enableBinaryLogging(bool enable = true);
+    void convertBinaryToCSV(const QString& binaryFile, const QString& csvFile);
 
 private slots:
     void processPendingDatagrams();
@@ -51,6 +52,7 @@ signals:
     void errorOccurred(const QString &msg);
     void loggingFinished();
     void loggingError(const QString& msg);
+    void conversionFinished();
 
 private:
     QUdpSocket *udpSocket = nullptr;
@@ -72,6 +74,7 @@ private:
     void parseDatagram(const char* data, qint64 size, QVector<float>& values); // Zero-copy version
     void parseDatagram(const QByteArray &datagram, QVector<float> &values); // Old version (optional)
     LoggingManager* loggingManager = nullptr;
+    bool binaryLoggingEnabled = false;  // Track binary logging state
     static constexpr int RING_BUFFER_SIZE = 65536;  // Increased to 65536 for high-rate data
     static constexpr int MAX_PACKET_SIZE = 65536;
     std::array<Packet, RING_BUFFER_SIZE> ringBuffer;

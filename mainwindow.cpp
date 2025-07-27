@@ -1070,25 +1070,56 @@ void MainWindow::on_logToCsvButton_clicked() {
     for (auto w : findChildren<QWidget*>()) w->setEnabled(false);
     ui->statusbar->showMessage("Logging in progress...", 0);
 
+    // Enable binary logging mode if checkbox is checked (BEFORE starting logging)
+    if (ui->binaryLoggingCheckBox->isChecked()) {
+        QMetaObject::invokeMethod(udpWorker, "enableBinaryLogging", Qt::QueuedConnection,
+            Q_ARG(bool, true));
+        ui->statusbar->showMessage("Binary logging mode enabled - maximum performance mode", 0);
+    }
+    
     // Start logging in the worker thread
     QMetaObject::invokeMethod(udpWorker, "startLogging", Qt::QueuedConnection,
         Q_ARG(QList<FieldDef>, fields),
         Q_ARG(int, structSize),
         Q_ARG(int, duration),
         Q_ARG(QString, filename));
-    
-    // Enable binary logging mode if checkbox is checked
-    if (ui->binaryLoggingCheckBox->isChecked()) {
-        QMetaObject::invokeMethod(udpWorker, "enableBinaryLogging", Qt::QueuedConnection,
-            Q_ARG(bool, true));
-        ui->statusbar->showMessage("Binary logging started - maximum performance mode", 0);
-    }
-    connect(udpWorker, &UdpWorker::loggingFinished, this, [this]() {
+    connect(udpWorker, &UdpWorker::loggingFinished, this, [this, filename]() {
+        // If binary logging was enabled, convert to CSV
+        if (ui->binaryLoggingCheckBox->isChecked()) {
+            ui->statusbar->showMessage("Converting binary to CSV...", 0);
+            
+            // Convert binary to CSV in a separate thread to avoid blocking UI
+            QThread* convertThread = QThread::create([this, filename]() {
+                QString binaryFile = filename;
+                binaryFile.replace(".csv", ".bin");
+                
+                if (QFile::exists(binaryFile)) {
+                    // Call the conversion method
+                    QMetaObject::invokeMethod(udpWorker, "convertBinaryToCSV", Qt::QueuedConnection,
+                        Q_ARG(QString, binaryFile),
+                        Q_ARG(QString, filename));
+                } else {
+                    qWarning() << "[MainWindow] Binary file not found:" << binaryFile;
+                }
+            });
+            
+            connect(convertThread, &QThread::finished, convertThread, &QThread::deleteLater);
+            convertThread->start();
+        }
+        
         for (auto w : findChildren<QWidget*>()) w->setEnabled(true);
         ui->logToCsvButton->setEnabled(true);
         if (autoScaleYTimer) autoScaleYTimer->start();
         if (plotUpdateTimer) plotUpdateTimer->start();
-        ui->statusbar->showMessage("Logging finished.", 3000);
+        
+        if (!ui->binaryLoggingCheckBox->isChecked()) {
+            ui->statusbar->showMessage("Logging finished.", 3000);
+        }
+    });
+    
+    // Handle conversion finished signal
+    connect(udpWorker, &UdpWorker::conversionFinished, this, [this]() {
+        ui->statusbar->showMessage("Binary to CSV conversion completed.", 3000);
     });
     connect(udpWorker, &UdpWorker::loggingError, this, [this](const QString& msg) {
         QMessageBox::critical(this, "Logging Error", msg);

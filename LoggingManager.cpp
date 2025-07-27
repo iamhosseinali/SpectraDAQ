@@ -92,8 +92,16 @@ void LoggingManager::startBinaryLogging() {
     binaryFilename.replace(".csv", ".bin");
     m_binaryFile.setFileName(binaryFilename);
     
+#ifdef ENABLE_DEBUG
+    qDebug() << "[LoggingManager] Attempting to open binary file:" << binaryFilename;
+#endif
+    
     if (!m_binaryFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        emit loggingError("Failed to open binary file for writing");
+        QString errorMsg = QString("Failed to open binary file for writing: %1").arg(m_binaryFile.errorString());
+#ifdef ENABLE_DEBUG
+        qWarning() << "[LoggingManager]" << errorMsg;
+#endif
+        emit loggingError(errorMsg);
         return;
     }
     
@@ -101,11 +109,13 @@ void LoggingManager::startBinaryLogging() {
     m_binaryHeader.structSize = m_structSize;
     m_binaryHeader.fieldCount = m_fields.size();
     m_binaryHeader.startTimestamp = QDateTime::currentMSecsSinceEpoch();
-    m_binaryFile.write(reinterpret_cast<const char*>(&m_binaryHeader), sizeof(m_binaryHeader));
+    qint64 bytesWritten = m_binaryFile.write(reinterpret_cast<const char*>(&m_binaryHeader), sizeof(m_binaryHeader));
     m_binaryFile.flush();
     
 #ifdef ENABLE_DEBUG
     qDebug() << "[LoggingManager] Started binary logging to" << binaryFilename;
+    qDebug() << "[LoggingManager] Wrote header:" << bytesWritten << "bytes";
+    qDebug() << "[LoggingManager] structSize:" << m_structSize << "fieldCount:" << m_fields.size();
 #endif
 }
 
@@ -156,6 +166,11 @@ void LoggingManager::convertBinaryToCSV(const QString& binaryFile, const QString
         return;
     }
     
+#ifdef ENABLE_DEBUG
+    qDebug() << "[LoggingManager] Converting binary file with" << header.packetCount << "packets";
+    qDebug() << "[LoggingManager] structSize:" << header.structSize << "fieldCount:" << header.fieldCount;
+#endif
+    
     // Write CSV header
     QStringList headers;
     for (const FieldDef& f : m_fields) {
@@ -172,6 +187,7 @@ void LoggingManager::convertBinaryToCSV(const QString& binaryFile, const QString
     buffer.resize(BATCH_SIZE);
     
     qint64 totalBytes = 0;
+    qint64 totalPackets = 0;
     while (!binFile.atEnd()) {
         qint64 bytesRead = binFile.read(buffer.data(), BATCH_SIZE);
         if (bytesRead <= 0) break;
@@ -184,12 +200,13 @@ void LoggingManager::convertBinaryToCSV(const QString& binaryFile, const QString
             for (const QVariant& v : values) row << v.toString();
             outCsvFile.write(row.join(",").toUtf8());
             outCsvFile.write("\n");
+            totalPackets++;
         }
         
         totalBytes += bytesRead;
 #ifdef ENABLE_DEBUG
         if (totalBytes % (10 * 1024 * 1024) == 0) { // Every 10MB
-            qDebug() << "Converted" << totalBytes / 1024 / 1024 << "MB";
+            qDebug() << "[LoggingManager] Converted" << totalBytes / 1024 / 1024 << "MB," << totalPackets << "packets";
         }
 #endif
     }
@@ -197,8 +214,10 @@ void LoggingManager::convertBinaryToCSV(const QString& binaryFile, const QString
     binFile.close();
     outCsvFile.close();
 #ifdef ENABLE_DEBUG
-    qDebug() << "Binary to CSV conversion completed:" << binaryFile << "->" << csvFile;
+    qDebug() << "[LoggingManager] Binary to CSV conversion completed:" << binaryFile << "->" << csvFile;
+    qDebug() << "[LoggingManager] Total packets converted:" << totalPackets << "Total bytes:" << totalBytes;
 #endif
+    emit conversionFinished();
 }
 
 void LoggingManager::writerThreadFunc() {
@@ -223,6 +242,14 @@ void LoggingManager::writerThreadFunc() {
                     writeBuffer.append(packet.data, packet.size);
                     m_binaryHeader.packetCount++;
                     m_bytesWritten += packet.size + sizeof(timestamp) + sizeof(packet.size);
+                    
+#ifdef ENABLE_DEBUG
+                    static int packetCount = 0;
+                    packetCount++;
+                    if (packetCount % 1000 == 0) {
+                        qDebug() << "[LoggingManager] Binary logging: processed" << packetCount << "packets, total bytes:" << m_bytesWritten.load();
+                    }
+#endif
                 }
                 if (writeBuffer.size() > flushThreshold) {
                     m_binaryFile.write(writeBuffer);

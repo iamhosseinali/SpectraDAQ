@@ -40,6 +40,7 @@ signals:
     void loggingFinished();
     void loggingError(const QString& msg);
     void loggingProgress(qint64 bytesWritten);
+    void conversionFinished();
 
 private:
     void writerThreadFunc();
