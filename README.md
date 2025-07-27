@@ -1,70 +1,151 @@
-# SpectraDAQ - DAQ Monitor
+# SpectraDAQ - High-Performance UDP Data Acquisition Monitor
 
-## Description
-SpectraDAQ is a Qt-based application for real-time monitoring and control of data acquisition (DAQ) devices over UDP. It supports binary struct parsing, high-throughput logging, real-time plotting, FFT analysis, and a customizable command system for device control.
+## Overview
+SpectraDAQ is a Qt-based real-time data acquisition monitor designed for high-throughput UDP packet processing. The application implements zero-copy data handling, lock-free ring buffers, and binary logging for maximum performance at data rates up to 1 Gbps.
 
-## Features
-- UDP communication for sending and receiving packets to/from DAQ hardware.
-- C struct parsing: user can paste C struct definitions to interpret incoming binary data.
-- Real-time plotting of selected struct fields (time series and FFT modes).
-- Preset system: save/load all UI state, including struct, plotting, and custom commands, to/from JSON.
-- Custom command system: define and send device-specific commands with flexible formatting.
-- High-speed logging: supports logging incoming data to CSV at rates up to 1 Gbps with zero data loss (requires Boost lockfree queue).
+## Core Architecture
 
-## Logging System
-- Logging is initiated via the UI. User specifies duration (seconds) and output CSV file.
-- During logging, all UI and plotting features are disabled for maximum performance.
-- Data is buffered in a lock-free queue and written to disk in batches using a dedicated thread.
-- CSV output is type-aware: each struct field is parsed and written as its correct value (signed/unsigned, float, etc.).
-- Logging uses all available CPU cores for buffering and writing. UDP receive is single-threaded (Qt limitation).
-- Boost (header-only) is required for lockfree queue. Set INCLUDEPATH in the .pro file accordingly.
+### UDP Communication Layer
+- Single-threaded UDP socket with configurable buffer sizes (64MB default)
+- OS-level socket buffer optimization for Windows/Linux
+- Thread priority elevation for real-time performance
+- Batch processing of pending datagrams (1000 packet batches)
 
-## Custom Command System
-- Two command types: Spinbox (integer value, 1–64 bytes, optional endianness swap) and Button (fixed payload, string or hex).
-- Spinbox command options: header (4-byte hex), value size (1–64 bytes), swap endianness (boolean), trailer (4-byte hex).
-- Button command options: header, trailer, command payload (string or hex).
-- All command options are stored in `presets.json` under the `custom_commands` array for each preset.
+### Data Parsing Engine
+- Dynamic C struct parser with field offset precomputation
+- Type-aware value extraction (int8_t through uint64_t, float, double)
+- Endianness handling with compile-time optimized conversion functions
+- Array field support with configurable indexing
 
-### Example: Spinbox Command JSON
+### Ring Buffer Implementation
+- Lock-free single-producer, single-consumer (SPSC) design
+- Preallocated memory pool (65536 packets × 64KB each)
+- Packet dropping strategy for high-rate scenarios
+- Zero-copy data transfer using raw pointers
+
+## Performance Optimizations
+
+### Memory Management
+- Precomputed field offsets, sizes, and alignments
+- std::function lambdas for type conversion (eliminates runtime branching)
+- QByteArray::fromRawData for zero-copy packet handling
+- Memory pool with std::unique_ptr<char[]> for packet storage
+
+### Threading Model
+- Dedicated UDP worker thread with high priority
+- Separate logging thread with buffered disk I/O
+- UI thread isolation for responsive plotting
+- QMetaObject::invokeMethod for thread-safe communication
+
+### Logging System
+- Binary logging mode for maximum throughput
+- CSV logging with type-aware field extraction
+- Automatic post-processing: binary → CSV conversion
+- Buffered writes with configurable batch sizes
+
+## Binary Logging Protocol
+
+### File Format
 ```
-{
-  "name": "Set Threshold",
-  "type": "spinbox",
-  "header": "0xAABBCCDD",
-  "value_size": 4,
-  "swap_endian": false,
-  "trailer": "0xEEFF0011",
-  "command": ""
-}
+Header (16 bytes):
+- Magic: 0x12345678 (4 bytes)
+- Packet count: uint32_t (4 bytes)
+- Struct size: uint32_t (4 bytes)
+- Field count: uint32_t (4 bytes)
+
+Data:
+- Raw struct data (packet_count × struct_size bytes)
 ```
 
-### Example: Button Command JSON
+### Conversion Process
+- Header validation and metadata extraction
+- Batch processing with 64KB read buffers
+- Field-by-field parsing using stored field definitions
+- CSV output with proper type conversion
+
+## Configuration
+
+### Socket Buffer Tuning
+```cpp
+// Windows
+setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
+
+// Linux
+setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
 ```
-{
-  "name": "Start Acquisition",
-  "type": "button",
-  "header": "0",
-  "value_size": 0,
-  "swap_endian": false,
-  "trailer": "0",
-  "command": "0x12345678"
-}
+
+### Thread Priority
+```cpp
+// Windows
+SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+
+// Linux
+pthread_setschedparam(threadHandle, SCHED_FIFO, &sch_params);
 ```
 
-## Usage
-- Paste C struct definition in the UI to parse incoming UDP data.
-- Select fields for plotting or logging.
-- Use the "Log to CSV" button to start high-speed logging. Specify duration and output file.
-- All UI controls are disabled during logging. Logging is type-aware and lossless (subject to system RAM and disk speed).
-- Use the "Edit Commands" button to define custom device commands. Commands are sent over UDP.
+## Build Configuration
 
-## Technical Notes
-- Spinbox values are encoded as unsigned integers, using the specified number of bytes. Endianness swap applies only to value bytes.
-- QSpinBox UI limit is 2,147,483,647. For value sizes >4 bytes, only the lower bytes of the integer are used.
-- All custom command options, including endianness, are saved in `presets.json` and restored with the preset.
-- Presets are stored as an array of objects, each with a `custom_commands` array.
+### Debug Mode
+```bash
+# Enable debug output
+qmake "DEFINES += ENABLE_DEBUG"
+make clean && make
 
-## Build Requirements
-- Qt 5.x or 6.x (tested with Qt 5.13+)
-- Boost (header-only, for lockfree queue)
-- C++17 or later
+# Disable debug output (default)
+qmake
+make clean && make
+```
+
+### Dependencies
+- Qt 5.13+ or Qt 6.x
+- C++17 standard
+- Windows: ws2_32 library
+- Linux: pthread, sched libraries
+
+## Usage Workflow
+
+### High-Rate Data Capture
+1. Define C struct in UI
+2. Enable binary logging checkbox
+3. Set logging duration and filename
+4. Start capture (binary file created)
+5. Automatic conversion to CSV post-capture
+
+### Performance Monitoring
+- Ring buffer utilization tracking
+- Packet drop statistics
+- Thread priority verification
+- Socket buffer size validation
+
+## Technical Specifications
+
+### Performance Targets
+- UDP throughput: 1 Gbps sustained
+- Packet processing: 100,000+ packets/sec
+- Memory usage: <100MB for 1GB data
+- UI responsiveness: 30 FPS plotting
+
+### System Requirements
+- CPU: Multi-core recommended
+- RAM: 4GB minimum, 8GB recommended
+- Storage: SSD for high-rate logging
+- Network: Gigabit Ethernet interface
+
+## Debug System
+
+### Console Output Control
+- Debug output controlled by ENABLE_DEBUG macro
+- Windows console allocation only in debug mode
+- Performance impact eliminated in release builds
+
+### Monitoring Commands
+```bash
+# Enable debug mode
+./enable_debug.bat
+
+# Disable debug mode  
+./disable_debug.bat
+
+# Test high-rate performance
+python test_high_rate.py 100 10  # 100 Mbps for 10 seconds
+```
