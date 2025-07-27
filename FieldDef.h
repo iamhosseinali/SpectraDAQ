@@ -16,4 +16,7 @@ struct FieldDef {
 // Extracts all field values from a struct buffer, returns as QVariant (int, double, etc.)
 std::vector<QVariant> extractFieldValues(const QByteArray& structData, const QList<FieldDef>& fields, bool swapEndian = false);
 
+// Zero-copy version that works with raw pointers
+std::vector<QVariant> extractFieldValues(const char* data, size_t size, const QList<FieldDef>& fields, bool swapEndian = false);
+
 #endif // FIELDDEF_H 

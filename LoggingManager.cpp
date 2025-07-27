@@ -6,6 +6,10 @@
 #include <QVariant>
 #include <vector>
 #include "UdpWorker.h"
+#ifdef Q_OS_LINUX
+#include <pthread.h>
+#include <sched.h>
+#endif
 
 LoggingManager::LoggingManager(const QList<FieldDef>& fields, int structSize, int durationSec, const QString& filename, UdpWorker* udpWorker, QObject* parent)
     : QObject(parent),
@@ -37,7 +41,13 @@ void LoggingManager::start() {
     writeCsvHeader();
     m_bytesWritten = 0;
     m_writerThread = std::thread(&LoggingManager::writerThreadFunc, this);
-    // TODO: If using QThread, set priority to QThread::AboveNormalPriority
+    // Set thread priority for better performance
+#ifdef Q_OS_LINUX
+    pthread_t threadHandle = m_writerThread.native_handle();
+    sched_param sch_params;
+    sch_params.sched_priority = sched_get_priority_max(SCHED_FIFO);
+    pthread_setschedparam(threadHandle, SCHED_FIFO, &sch_params);
+#endif
     m_timer->start(m_durationSec * 1000);
 }
 
@@ -59,29 +69,31 @@ void LoggingManager::writerThreadFunc() {
     QByteArray writeBuffer;
     const int flushThreshold = 64 * 1024; // 64KB
     while (m_running) {
-        QByteArray datagram;
+        UdpWorker::Packet packet;
         bool gotData = false;
         do {
-            gotData = m_udpWorker && m_udpWorker->popFromRingBuffer(datagram);
+            gotData = m_udpWorker && m_udpWorker->popFromRingBuffer(packet);
             if (gotData) {
-                int nStructs = datagram.size() / m_structSize;
+                int nStructs = packet.size / m_structSize;
+                if (nStructs > 0) {
+                    qDebug() << "[LoggingManager] Processing" << nStructs << "structs from packet of size" << packet.size;
+                }
                 for (int i = 0; i < nStructs; ++i) {
-                    const char* structPtr = datagram.constData() + i * m_structSize;
-                    QByteArray structView = QByteArray::fromRawData(structPtr, m_structSize);
-                    auto values = extractFieldValues(structView, m_fields);
+                    const char* structPtr = packet.data + i * m_structSize;
+                    auto values = extractFieldValues(structPtr, m_structSize, m_fields);
                     QStringList row;
                     for (const QVariant& v : values) row << v.toString();
                     writeBuffer += row.join(",").toUtf8();
                     writeBuffer += "\n";
                 }
-                m_bytesWritten += datagram.size();
+                m_bytesWritten += packet.size;
             }
             if (writeBuffer.size() > flushThreshold) {
                 m_file.write(writeBuffer);
                 writeBuffer.clear();
             }
         } while (gotData);
-        QThread::msleep(1);
+        QThread::usleep(100);  // Reduced from 1ms to 100 microseconds
     }
     if (!writeBuffer.isEmpty()) {
         m_file.write(writeBuffer);

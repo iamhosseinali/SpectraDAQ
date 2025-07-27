@@ -3,13 +3,19 @@
 #include <QtEndian>
 #include <algorithm>
 #include "mainwindow.h"
+#include "LoggingManager.h"
 #include <QDateTime>
 #ifdef Q_OS_LINUX
 #include <sys/socket.h>
 #endif
 
 UdpWorker::UdpWorker(QObject *parent) : QObject(parent) {
-    ringBuffer.resize(RING_BUFFER_SIZE);
+    packetPool.resize(RING_BUFFER_SIZE);
+    for (auto& ptr : packetPool) {
+        ptr = std::make_unique<char[]>(MAX_PACKET_SIZE);
+    }
+    recvBuffer.resize(MAX_PACKET_SIZE);
+    ringBuffer.fill(Packet{});
 }
 
 UdpWorker::~UdpWorker() {
@@ -114,8 +120,8 @@ void UdpWorker::configure(const QString &structText_, const QList<FieldDef> &fie
     } else {
         converter = [](const char*, bool) { return 0.0f; };
     }
-    // Resize ring buffer to struct size
-    ringBuffer.resize(RING_BUFFER_SIZE);
+    // Remove this line, std::array does not support resize
+    // ringBuffer.resize(RING_BUFFER_SIZE);
 }
 
 void UdpWorker::updateConfig(const QString &structText_, const QList<FieldDef> &fields_, int structSize_, bool endianness_, int selectedField_, int selectedArrayIndex_, int selectedFieldCount_) {
@@ -174,54 +180,73 @@ void UdpWorker::stopLogging() {
     }
 }
 
-void UdpWorker::pushToRingBuffer(const QByteArray& datagram) {
+void UdpWorker::pushToRingBuffer(const char* data, size_t size) {
     int currentHead = ringHead.load(std::memory_order_relaxed);
     int nextHead = (currentHead + 1) % RING_BUFFER_SIZE;
-    if (nextHead != ringTail.load(std::memory_order_acquire)) { // Not full
-        ringBuffer[currentHead].data = datagram;
-        ringBuffer[currentHead].timestamp = QDateTime::currentMSecsSinceEpoch();
-        ringHead.store(nextHead, std::memory_order_release);
-    } else {
-        static QAtomicInt dropCount = 0;
-        dropCount++;
-        if (dropCount % 1000 == 0) {
-            qWarning() << "Dropped" << dropCount << "packets due to full buffer";
-        }
+    
+    // Wait if buffer is full instead of dropping packets
+    while (nextHead == ringTail.load(std::memory_order_acquire)) {
+        // Buffer is full, wait a bit for logging thread to catch up
+        QThread::usleep(100);  // 100 microseconds
+        currentHead = ringHead.load(std::memory_order_relaxed);
+        nextHead = (currentHead + 1) % RING_BUFFER_SIZE;
+    }
+    
+    char* buffer = packetPool[currentHead].get();
+    memcpy(buffer, data, size);
+    ringBuffer[currentHead] = {buffer, size, QDateTime::currentMSecsSinceEpoch()};
+    ringHead.store(nextHead, std::memory_order_release);
+    if (MainWindow::debugLogEnabled) {
+        qDebug() << "[UdpWorker] Pushed packet of size" << size << "to ring buffer at position" << currentHead;
     }
 }
 
-bool UdpWorker::popFromRingBuffer(QByteArray& datagram) {
+bool UdpWorker::popFromRingBuffer(Packet& packet) {
     int currentTail = ringTail.load(std::memory_order_relaxed);
     if (currentTail == ringHead.load(std::memory_order_acquire)) {
         return false; // Empty
     }
-    datagram = ringBuffer[currentTail].data;
+    packet = ringBuffer[currentTail];
     ringTail.store((currentTail + 1) % RING_BUFFER_SIZE, std::memory_order_release);
+    if (MainWindow::debugLogEnabled) {
+        qDebug() << "[UdpWorker] Popped packet of size" << packet.size << "from ring buffer at position" << currentTail;
+    }
     return true;
 }
 
 void UdpWorker::processPendingDatagrams() {
     if (!running || !udpSocket) return;
-    static QByteArray buffer;
-    static const int maxDatagramSize = 65536; // 64KB, adjust as needed
-    if (buffer.size() < maxDatagramSize) buffer.resize(maxDatagramSize);
     QVector<float> allValues;
-    allValues.reserve(4096);
+    const int MAX_BATCH = 8192;  // Increased to 8192 for high-rate data
+    int processed = 0;
+    
+    // Process all available datagrams without artificial limits
     while (udpSocket->hasPendingDatagrams() && running) {
         qint64 size = udpSocket->pendingDatagramSize();
-        if (size > maxDatagramSize) continue; // Skip oversized
-        if (buffer.size() < size) buffer.resize(size);
-        qint64 read = udpSocket->readDatagram(buffer.data(), size);
+        if (size > MAX_PACKET_SIZE) {
+            udpSocket->readDatagram(recvBuffer.data(), MAX_PACKET_SIZE); // Skip oversized packet
+            continue;
+        }
+        qint64 read = udpSocket->readDatagram(recvBuffer.data(), size);
         if (read != size) continue;
-        QVector<float> values;
-        // Zero-copy: pass pointer and size
-        parseDatagram(buffer.constData(), size, values);
-        allValues += values;
-        // Only copy for ring buffer
-        pushToRingBuffer(QByteArray(buffer.constData(), size));
+        parseDatagram(recvBuffer.constData(), size, allValues);
+        pushToRingBuffer(recvBuffer.constData(), size);
+        processed++;
+        
+        // Only limit if we're processing too many at once to prevent blocking
+        if (processed > MAX_BATCH) {
+            break;
+        }
     }
-    if (!allValues.isEmpty()) {
-        emit dataReceived(allValues);
+    if (!allValues.isEmpty()) emit dataReceived(allValues);
+    
+    // Diagnostic output for high-rate monitoring
+    if (MainWindow::debugLogEnabled && processed > 0) {
+        static int totalProcessed = 0;
+        totalProcessed += processed;
+        if (totalProcessed % 10000 == 0) {
+            qDebug() << "[UdpWorker] Total packets processed:" << totalProcessed;
+        }
     }
 }
 

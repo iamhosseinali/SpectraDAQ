@@ -9,9 +9,6 @@
 #include <QString>
 #include <QVector>
 #include <QByteArray>
-#include <QMutex>
-#include <QWaitCondition>
-#include <boost/lockfree/spsc_queue.hpp>
 #include <atomic>
 #include <thread>
 #include <vector>

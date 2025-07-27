@@ -5,10 +5,13 @@
 #include <QVector>
 #include "FieldDef.h"
 #include "mainwindow.h"
-#include "LoggingManager.h"
 #include <atomic>
 #include <vector>
 #include <functional>
+#include <array>
+#include <memory>
+
+class LoggingManager; // Forward declaration
 
 class UdpWorker : public QObject {
     Q_OBJECT
@@ -16,16 +19,17 @@ public:
     explicit UdpWorker(QObject *parent = nullptr);
     ~UdpWorker();
 
-    void configure(const QString &structText, const QList<FieldDef> &fields, int structSize, bool endianness, int selectedField, int selectedArrayIndex, int selectedFieldCount);
-    void pushToRingBuffer(const QByteArray& datagram);
-    bool popFromRingBuffer(QByteArray& datagram);
-
-    using ConverterFunc = std::function<float(const char*, bool)>;
-
     struct Packet {
-        QByteArray data;
+        char* data = nullptr;
+        size_t size = 0;
         qint64 timestamp = 0;
     };
+
+    void configure(const QString &structText, const QList<FieldDef> &fields, int structSize, bool endianness, int selectedField, int selectedArrayIndex, int selectedFieldCount);
+    void pushToRingBuffer(const char* data, size_t size);
+    bool popFromRingBuffer(Packet& packet);
+
+    using ConverterFunc = std::function<float(const char*, bool)>;
 
 public slots:
     void start(quint16 port);
@@ -67,8 +71,11 @@ private:
     void parseDatagram(const char* data, qint64 size, QVector<float>& values); // Zero-copy version
     void parseDatagram(const QByteArray &datagram, QVector<float> &values); // Old version (optional)
     LoggingManager* loggingManager = nullptr;
-    static constexpr int RING_BUFFER_SIZE = 1024;
-    QVector<Packet> ringBuffer;
+    static constexpr int RING_BUFFER_SIZE = 16384;  // Increased from 1024 to 16384
+    static constexpr int MAX_PACKET_SIZE = 65536;
+    std::array<Packet, RING_BUFFER_SIZE> ringBuffer;
+    std::vector<std::unique_ptr<char[]>> packetPool;
+    QByteArray recvBuffer;
     std::atomic<int> ringHead{0};
     std::atomic<int> ringTail{0};
 }; 
