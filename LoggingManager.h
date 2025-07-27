@@ -29,6 +29,12 @@ public:
     void start();
     void stop();
     bool isRunning() const;
+    
+    // Binary logging methods
+    void enableBinaryMode(bool enable = true) { m_binaryMode = enable; }
+    void startBinaryLogging();
+    void stopBinaryLogging();
+    void convertBinaryToCSV(const QString& binaryFile, const QString& csvFile);
 
 signals:
     void loggingFinished();
@@ -51,6 +57,18 @@ private:
     QTimer* m_timer;
 
     UdpWorker* m_udpWorker = nullptr;
+    
+    // Binary logging members
+    QFile m_binaryFile;
+    bool m_binaryMode = false;
+    struct BinaryHeader {
+        uint32_t magic = 0x12345678;
+        uint32_t version = 1;
+        uint32_t structSize;
+        uint32_t fieldCount;
+        uint64_t startTimestamp;
+        uint64_t packetCount = 0;
+    } m_binaryHeader;
 };
 
 #endif // LOGGINGMANAGER_H

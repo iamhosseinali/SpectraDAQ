@@ -5,8 +5,13 @@
 #include "mainwindow.h"
 #include "LoggingManager.h"
 #include <QDateTime>
-#ifdef Q_OS_LINUX
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <winsock2.h>
+#elif defined(Q_OS_LINUX)
 #include <sys/socket.h>
+#include <pthread.h>
+#include <sched.h>
 #endif
 
 UdpWorker::UdpWorker(QObject *parent) : QObject(parent) {
@@ -125,7 +130,13 @@ void UdpWorker::configure(const QString &structText_, const QList<FieldDef> &fie
 }
 
 void UdpWorker::updateConfig(const QString &structText_, const QList<FieldDef> &fields_, int structSize_, bool endianness_, int selectedField_, int selectedArrayIndex_, int selectedFieldCount_) {
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] updateConfig called with structSize=" << structSize_ << "selectedField=" << selectedField_ << "endianness=" << endianness_;
+#endif
     configure(structText_, fields_, structSize_, endianness_, selectedField_, selectedArrayIndex_, selectedFieldCount_);
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] Configuration updated: structSize=" << structSize << "selectedTypeSize=" << selectedTypeSize;
+#endif
 }
 
 void UdpWorker::start(quint16 port_) {
@@ -134,18 +145,138 @@ void UdpWorker::start(quint16 port_) {
     udpSocket = new QUdpSocket(this);
     // Set Qt buffer size BEFORE binding
     udpSocket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption, 64 * 1024 * 1024);  // 64MB
-    // Set OS-level buffer size (Linux)
-#ifdef Q_OS_LINUX
-    int sockfd = udpSocket->socketDescriptor();
-    int bufSize = 64 * 1024 * 1024;
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
-#endif
+    
     if (!udpSocket->bind(QHostAddress::AnyIPv4, port)) {
         emit errorOccurred(QString("Failed to bind UDP socket on port %1").arg(port));
         return;
     }
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] Successfully bound UDP socket to port" << port;
+    qDebug() << "[UdpWorker] Socket is ready to receive data on port" << port;
+#endif
+    
+    // Set OS-level buffer size AFTER binding
+#ifdef Q_OS_WIN
+    int sockfd = udpSocket->socketDescriptor();
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] Socket descriptor:" << sockfd;
+#endif
+    
+    if (sockfd == -1) {
+#ifdef ENABLE_DEBUG
+        qWarning() << "[UdpWorker] ERROR: Invalid socket descriptor!";
+        qWarning() << "[UdpWorker] Socket not created properly.";
+#endif
+        return;
+    }
+    
+    int bufSize = 64 * 1024 * 1024;  // 64MB
+    int result = setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (char*)&bufSize, sizeof(bufSize));
+    if (result != 0) {
+#ifdef ENABLE_DEBUG
+        qWarning() << "[UdpWorker] ERROR: setsockopt failed with error code:" << WSAGetLastError();
+        qWarning() << "[UdpWorker] This may be a Windows permission or configuration issue.";
+#endif
+        
+        // Try smaller buffer sizes as fallback
+        int fallbackSizes[] = {1024*1024, 256*1024, 64*1024, 32*1024}; // 1MB, 256KB, 64KB, 32KB
+        for (int fallbackSize : fallbackSizes) {
+            result = setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (char*)&fallbackSize, sizeof(fallbackSize));
+            if (result == 0) {
+#ifdef ENABLE_DEBUG
+                qDebug() << "[UdpWorker] Successfully set buffer size to" << fallbackSize << "bytes";
+#endif
+                bufSize = fallbackSize;
+                break;
+            }
+        }
+    }
+    
+    // Verify buffer size was set correctly
+    int actualBufSize = 0;
+    int optlen = sizeof(actualBufSize);
+    result = getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (char*)&actualBufSize, &optlen);
+    if (result != 0) {
+#ifdef ENABLE_DEBUG
+        qWarning() << "[UdpWorker] ERROR: getsockopt failed with error code:" << WSAGetLastError();
+#endif
+    }
+    
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] Requested buffer size:" << bufSize << "bytes, Actual:" << actualBufSize << "bytes";
+#endif
+    
+    if (actualBufSize < bufSize) {
+#ifdef ENABLE_DEBUG
+        qWarning() << "[UdpWorker] WARNING: Actual buffer size is smaller than requested!";
+        qWarning() << "[UdpWorker] This may cause packet drops at high rates.";
+        qWarning() << "[UdpWorker] Try running as Administrator for maximum buffer size.";
+        qWarning() << "[UdpWorker] Current buffer size should still work for moderate data rates.";
+#endif
+    }
+#elif defined(Q_OS_LINUX)
+    int sockfd = udpSocket->socketDescriptor();
+    int bufSize = 64 * 1024 * 1024;
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
+    
+    // Verify buffer size was set correctly
+    int actualBufSize = 0;
+    socklen_t optlen = sizeof(actualBufSize);
+    getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &actualBufSize, &optlen);
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] Requested buffer size:" << bufSize << "bytes, Actual:" << actualBufSize << "bytes";
+#endif
+    
+    if (actualBufSize < bufSize) {
+#ifdef ENABLE_DEBUG
+        qWarning() << "[UdpWorker] WARNING: Actual buffer size is smaller than requested!";
+        qWarning() << "[UdpWorker] This may cause packet drops at high rates.";
+        qWarning() << "[UdpWorker] Try running with sudo or increase system limits.";
+#endif
+    }
+#endif
+    
     connect(udpSocket, &QUdpSocket::readyRead, this, &UdpWorker::processPendingDatagrams);
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] Connected readyRead signal to processPendingDatagrams";
+#endif
     running = true;
+    
+    // Set UDP thread priority for better performance
+#ifdef Q_OS_WIN
+    // Set thread priority to high on Windows
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] Set UDP thread priority to HIGHEST";
+#endif
+#elif defined(Q_OS_LINUX)
+    pthread_t threadHandle = QThread::currentThread()->native_handle();
+    sched_param sch_params;
+    sch_params.sched_priority = sched_get_priority_max(SCHED_FIFO);
+    pthread_setschedparam(threadHandle, SCHED_FIFO, &sch_params);
+#endif
+    
+    // Add a timer to check if we're receiving data
+    QTimer* dataCheckTimer = new QTimer(this);
+    connect(dataCheckTimer, &QTimer::timeout, this, [this]() {
+        static int noDataCount = 0;
+        if (running && udpSocket) {
+            if (udpSocket->hasPendingDatagrams()) {
+                noDataCount = 0;
+            } else {
+                noDataCount++;
+#ifdef ENABLE_DEBUG
+                if (noDataCount == 10) { // 10 seconds
+                    qWarning() << "[UdpWorker] No UDP data received for 10 seconds!";
+                    qWarning() << "[UdpWorker] Check: 1) Data source is sending to port" << port;
+                    qWarning() << "[UdpWorker] Check: 2) Windows Firewall is not blocking UDP";
+                    qWarning() << "[UdpWorker] Check: 3) Network interface is correct";
+                }
+#endif
+            }
+        }
+    });
+    dataCheckTimer->start(1000); // Check every second
 }
 
 void UdpWorker::stop() {
@@ -180,25 +311,39 @@ void UdpWorker::stopLogging() {
     }
 }
 
+void UdpWorker::enableBinaryLogging(bool enable) {
+    if (loggingManager) {
+        loggingManager->enableBinaryMode(enable);
+#ifdef ENABLE_DEBUG
+        qDebug() << "[UdpWorker] Binary logging mode" << (enable ? "enabled" : "disabled");
+#endif
+    }
+}
+
 void UdpWorker::pushToRingBuffer(const char* data, size_t size) {
     int currentHead = ringHead.load(std::memory_order_relaxed);
     int nextHead = (currentHead + 1) % RING_BUFFER_SIZE;
     
-    // Wait if buffer is full instead of dropping packets
-    while (nextHead == ringTail.load(std::memory_order_acquire)) {
-        // Buffer is full, wait a bit for logging thread to catch up
-        QThread::usleep(100);  // 100 microseconds
-        currentHead = ringHead.load(std::memory_order_relaxed);
-        nextHead = (currentHead + 1) % RING_BUFFER_SIZE;
+    // For high-rate data, drop packets if buffer is full instead of blocking
+    if (nextHead == ringTail.load(std::memory_order_acquire)) {
+        // Buffer is full, drop this packet for high-rate scenarios
+        static int dropCount = 0;
+        dropCount++;
+#ifdef ENABLE_DEBUG
+        if (dropCount % 1000 == 0) {
+            qWarning() << "[UdpWorker] Dropped" << dropCount << "packets due to full ring buffer";
+        }
+#endif
+        return;
     }
     
     char* buffer = packetPool[currentHead].get();
     memcpy(buffer, data, size);
     ringBuffer[currentHead] = {buffer, size, QDateTime::currentMSecsSinceEpoch()};
     ringHead.store(nextHead, std::memory_order_release);
-    if (MainWindow::debugLogEnabled) {
-        qDebug() << "[UdpWorker] Pushed packet of size" << size << "to ring buffer at position" << currentHead;
-    }
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] Pushed packet of size" << size << "to ring buffer at position" << currentHead;
+#endif
 }
 
 bool UdpWorker::popFromRingBuffer(Packet& packet) {
@@ -208,20 +353,29 @@ bool UdpWorker::popFromRingBuffer(Packet& packet) {
     }
     packet = ringBuffer[currentTail];
     ringTail.store((currentTail + 1) % RING_BUFFER_SIZE, std::memory_order_release);
-    if (MainWindow::debugLogEnabled) {
-        qDebug() << "[UdpWorker] Popped packet of size" << packet.size << "from ring buffer at position" << currentTail;
-    }
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] Popped packet of size" << packet.size << "from ring buffer at position" << currentTail;
+#endif
     return true;
 }
 
 void UdpWorker::processPendingDatagrams() {
     if (!running || !udpSocket) return;
+    
+#ifdef ENABLE_DEBUG
+    static int callCount = 0;
+    callCount++;
+    if (callCount % 100 == 0) { // Log every 100 calls
+        qDebug() << "[UdpWorker] processPendingDatagrams called" << callCount << "times";
+    }
+#endif
+    
     QVector<float> allValues;
-    const int MAX_BATCH = 8192;  // Increased to 8192 for high-rate data
+    const int MAX_BATCH = 1000;  // Reduced for more frequent updates
     int processed = 0;
     
-    // Process all available datagrams without artificial limits
-    while (udpSocket->hasPendingDatagrams() && running) {
+    // Process all available datagrams with reasonable limits
+    while (udpSocket->hasPendingDatagrams() && running && processed < MAX_BATCH) {
         qint64 size = udpSocket->pendingDatagramSize();
         if (size > MAX_PACKET_SIZE) {
             udpSocket->readDatagram(recvBuffer.data(), MAX_PACKET_SIZE); // Skip oversized packet
@@ -229,43 +383,109 @@ void UdpWorker::processPendingDatagrams() {
         }
         qint64 read = udpSocket->readDatagram(recvBuffer.data(), size);
         if (read != size) continue;
+        
+#ifdef ENABLE_DEBUG
+        static int totalReceived = 0;
+        totalReceived++;
+        if (totalReceived % 100 == 0) { // Log every 100 packets instead of 10
+            qDebug() << "[UdpWorker] Received datagram #" << totalReceived << "of size:" << size << "bytes";
+        }
+#endif
+        
         parseDatagram(recvBuffer.constData(), size, allValues);
         pushToRingBuffer(recvBuffer.constData(), size);
         processed++;
-        
-        // Only limit if we're processing too many at once to prevent blocking
-        if (processed > MAX_BATCH) {
-            break;
-        }
     }
-    if (!allValues.isEmpty()) emit dataReceived(allValues);
     
-    // Diagnostic output for high-rate monitoring
-    if (MainWindow::debugLogEnabled && processed > 0) {
+#ifdef ENABLE_DEBUG
+    if (processed > 0) {
         static int totalProcessed = 0;
         totalProcessed += processed;
-        if (totalProcessed % 10000 == 0) {
-            qDebug() << "[UdpWorker] Total packets processed:" << totalProcessed;
+        if (totalProcessed % 1000 == 0) { // Log every 1000 packets
+            qDebug() << "[UdpWorker] Total packets processed:" << totalProcessed << "with" << allValues.size() << "values";
         }
     }
+#endif
+    
+    if (!allValues.isEmpty()) {
+#ifdef ENABLE_DEBUG
+        static int signalCount = 0;
+        signalCount++;
+        if (signalCount % 100 == 0) { // Log every 100 signals
+            qDebug() << "[UdpWorker] Emitting dataReceived signal #" << signalCount << "with" << allValues.size() << "values";
+        }
+#endif
+        emit dataReceived(allValues);
+    } else if (processed > 0) {
+#ifdef ENABLE_DEBUG
+        qWarning() << "[UdpWorker] WARNING: Processed" << processed << "datagrams but extracted 0 values!";
+#endif
+    }
+    
+#ifdef ENABLE_DEBUG
+    // Check ring buffer status
+    int ringBufferSize = (ringHead.load() - ringTail.load() + RING_BUFFER_SIZE) % RING_BUFFER_SIZE;
+    if (ringBufferSize > 0) {
+        qDebug() << "[UdpWorker] Ring buffer has" << ringBufferSize << "packets waiting";
+    }
+#endif
 }
 
 void UdpWorker::parseDatagram(const char* data, qint64 size, QVector<float>& values) {
-    if (structSize <= 0 || selectedTypeSize == 0) return;
+    if (structSize <= 0 || selectedTypeSize == 0) {
+#ifdef ENABLE_DEBUG
+        qWarning() << "[UdpWorker] parseDatagram: structSize=" << structSize << "selectedTypeSize=" << selectedTypeSize;
+#endif
+        return;
+    }
     int numStructs = size / structSize;
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] parseDatagram: size=" << size << "structSize=" << structSize << "numStructs=" << numStructs;
+#endif
+    
+#ifdef ENABLE_DEBUG
+    // Always log the first few packets to see what's happening
+    static int packetCount = 0;
+    packetCount++;
+    if (packetCount <= 5) {
+        qDebug() << "[UdpWorker] Packet" << packetCount << ": size=" << size << "structSize=" << structSize << "numStructs=" << numStructs;
+        qDebug() << "[UdpWorker] selectedFieldOffset=" << selectedFieldOffset << "selectedTypeSize=" << selectedTypeSize;
+    }
+#endif
+    
     for (int structIdx = 0; structIdx < numStructs; ++structIdx) {
         int offset = structIdx * structSize + selectedFieldOffset;
         if (offset + selectedTypeSize > size) break;
-        values.append(converter(data + offset, endianness));
+        float value = converter(data + offset, endianness);
+        values.append(value);
+#ifdef ENABLE_DEBUG
+        if (structIdx < 3) {
+            qDebug() << "[UdpWorker] Struct" << structIdx << "offset" << offset << "value:" << value;
+        }
+        // Always log the first few values
+        if (packetCount <= 5 && structIdx < 3) {
+            qDebug() << "[UdpWorker] Extracted value:" << value << "at offset" << offset;
+        }
+#endif
+    }
+    if (values.isEmpty() && numStructs > 0) {
+#ifdef ENABLE_DEBUG
+        qWarning() << "[UdpWorker] WARNING: No values extracted from" << numStructs << "structs!";
+        qWarning() << "[UdpWorker] Check structSize=" << structSize << "selectedFieldOffset=" << selectedFieldOffset << "selectedTypeSize=" << selectedTypeSize;
+#endif
     }
 }
 
 void UdpWorker::onSocketError(QAbstractSocket::SocketError socketError) {
-    if (MainWindow::debugLogEnabled) qDebug() << "[UdpWorker] udpSocket error:" << socketError;
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] udpSocket error:" << socketError;
+#endif
 }
 
 void UdpWorker::sendDatagram(const QByteArray &data, const QHostAddress &addr, quint16 port) {
-    if (MainWindow::debugLogEnabled) qDebug() << "[UdpWorker] sendDatagram called" << data.toHex() << addr << port;
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UdpWorker] sendDatagram called" << data.toHex() << addr << port;
+#endif
     if (udpSocket) {
         QObject::connect(udpSocket, SIGNAL(error(QAbstractSocket::SocketError)), this, SLOT(onSocketError(QAbstractSocket::SocketError)));
         udpSocket->writeDatagram(data, addr, port);

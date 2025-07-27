@@ -27,8 +27,6 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    static bool debugLogEnabled;
-    static void setDebugLogEnabled(bool enabled);
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
@@ -50,6 +48,7 @@ private slots:
     void handleUdpData(QVector<float> values);
     void on_arrayIndexSpinBox_valueChanged(int value);
     void on_endiannessCheckBox_toggled(bool checked);
+    void on_binaryLoggingCheckBox_toggled(bool checked);  // New slot for binary logging
 
 signals:
     void startUdp(quint16 port);

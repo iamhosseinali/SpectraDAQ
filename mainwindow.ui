@@ -106,13 +106,7 @@
         </property>
        </widget>
       </item>
-      <item>
-       <widget class="QCheckBox" name="debugLogCheckBox">
-        <property name="text">
-         <string>Enable Debug Log</string>
-        </property>
-       </widget>
-      </item>
+      <!-- Debug checkbox removed - debug mode is now controlled by ENABLE_DEBUG macro -->
       <!-- Add refresh rate control -->
       <item>
        <widget class="QLabel" name="label_refreshRate">
@@ -140,6 +134,12 @@
     <item>
      <widget class="QPushButton" name="logToCsvButton">
       <property name="text"><string>Log to CSV</string></property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QCheckBox" name="binaryLoggingCheckBox">
+      <property name="text"><string>Binary Logging (Max Performance)</string></property>
+      <property name="toolTip"><string>Enable binary logging for maximum performance. Converts to CSV after capture.</string></property>
      </widget>
     </item>
     <item>

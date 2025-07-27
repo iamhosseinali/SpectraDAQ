@@ -39,6 +39,7 @@ public slots:
     void sendDatagram(const QByteArray &data, const QHostAddress &addr, quint16 port);
     void startLogging(const QList<FieldDef>& fields, int structSize, int durationSec, const QString& filename);
     void stopLogging();
+    void enableBinaryLogging(bool enable = true);
 
 private slots:
     void processPendingDatagrams();
@@ -71,7 +72,7 @@ private:
     void parseDatagram(const char* data, qint64 size, QVector<float>& values); // Zero-copy version
     void parseDatagram(const QByteArray &datagram, QVector<float> &values); // Old version (optional)
     LoggingManager* loggingManager = nullptr;
-    static constexpr int RING_BUFFER_SIZE = 16384;  // Increased from 1024 to 16384
+    static constexpr int RING_BUFFER_SIZE = 65536;  // Increased to 65536 for high-rate data
     static constexpr int MAX_PACKET_SIZE = 65536;
     std::array<Packet, RING_BUFFER_SIZE> ringBuffer;
     std::vector<std::unique_ptr<char[]>> packetPool;

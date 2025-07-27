@@ -34,12 +34,11 @@
 
 QT_CHARTS_USE_NAMESPACE
 
-
 // Simple C struct parser
 QList<FieldDef> parseCStruct(const QString &structText) {
     QList<FieldDef> fields;
     QStringList lines = structText.split('\n');
-    QRegularExpression re(R"((\w+_t|\w+)\s+(\w+)(\[(\d+)\])?;)");
+    QRegularExpression re(R"((\w+_t|\w+)\s+(\w+)(\[(\d+)\])?;?)");
     for (const QString &line : lines) {
         QString trimmed = line.trimmed();
         if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("typedef") || trimmed.startsWith("{") || trimmed.startsWith("}"))
@@ -51,6 +50,9 @@ QList<FieldDef> parseCStruct(const QString &structText) {
             field.name = match.captured(2);
             field.count = match.captured(4).isEmpty() ? 1 : match.captured(4).toInt();
             fields.append(field);
+    #ifdef ENABLE_DEBUG
+        qDebug() << "[parseCStruct] Found field:" << field.type << field.name << "count:" << field.count;
+#endif
         }
     }
     return fields;
@@ -217,17 +219,28 @@ MainWindow::MainWindow(QWidget *parent)
     int refreshHz = ui->refreshRateSpinBox->value();
     int refreshInterval = 1000 / std::max(1, refreshHz);
     plotUpdateTimer->setInterval(refreshInterval);
+    // For high-rate data, limit plot updates to prevent UI blocking
+    if (refreshHz > 30) {
+        plotUpdateTimer->setInterval(33); // Cap at ~30 FPS for high-rate data
+    }
     connect(plotUpdateTimer, &QTimer::timeout, this, &MainWindow::updatePlot);
     plotUpdateTimer->start();
     connect(ui->refreshRateSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int hz){
         int interval = 1000 / std::max(1, hz);
+        // For high-rate data, limit plot updates to prevent UI blocking
+        if (hz > 30) {
+            interval = 33; // Cap at ~30 FPS for high-rate data
+        }
         plotUpdateTimer->setInterval(interval);
+#ifdef ENABLE_DEBUG
         qDebug() << "[UI] plotUpdateTimer interval set to" << interval << "ms for refresh rate" << hz;
+#endif
     });
 
     updatePresetComboBox();
     updateCustomCommandsUI();
     connect(ui->logToCsvButton, &QPushButton::clicked, this, &MainWindow::on_logToCsvButton_clicked);
+    connect(ui->binaryLoggingCheckBox, &QCheckBox::toggled, this, &MainWindow::on_binaryLoggingCheckBox_toggled);
 
     // --- UDP Worker Thread Setup ---
     udpThread = new QThread(this);
@@ -244,9 +257,8 @@ MainWindow::MainWindow(QWidget *parent)
     emit startUdp(ui->portSpinBox->value());
 
     // Connect debugLogCheckBox toggled signal
-    connect(ui->debugLogCheckBox, &QCheckBox::toggled, this, [](bool checked){
-        MainWindow::setDebugLogEnabled(checked);
-    });
+    // Debug logging is now controlled by ENABLE_DEBUG macro
+    // Removed debugLogCheckBox connection
 }
 
 MainWindow::~MainWindow()
@@ -312,11 +324,15 @@ void MainWindow::on_parseStructButton_clicked()
     };
 
     // Print parsed fields and sizes
+#ifdef ENABLE_DEBUG
     qDebug() << "Parsed struct fields:";
+#endif
     int structSize = 0;
     for (const FieldDef &field : fields) {
         int sz = typeSize(field.type);
+#ifdef ENABLE_DEBUG
         qDebug() << field.type << field.name << "count:" << field.count << "size:" << sz * field.count;
+#endif
         if (sz == 0) continue; // skip unknown types
         structSize += sz * field.count;
     }
@@ -344,6 +360,18 @@ void MainWindow::on_parseStructButton_clicked()
         ui->fieldTableWidget->setItem(i, 3, new QTableWidgetItem(QString::number(fields[i].count)));
     }
     ui->fieldTableWidget->resizeColumnsToContents();
+    
+    // Auto-select first field for simple structs (1-2 fields)
+    if (fields.size() <= 2 && fields.size() > 0) {
+        QTableWidgetItem *firstItem = ui->fieldTableWidget->item(0, 0);
+        if (firstItem) {
+            firstItem->setCheckState(Qt::Checked);
+#ifdef ENABLE_DEBUG
+            qDebug() << "[MainWindow] Auto-selected first field:" << fields[0].name;
+#endif
+        }
+    }
+    
     // After updating the table, emit updateUdpConfig
     int selectedField = -1;
     int selectedArrayIndex = 0;
@@ -353,13 +381,26 @@ void MainWindow::on_parseStructButton_clicked()
         if (item && item->checkState() == Qt::Checked) {
             selectedField = row;
             selectedFieldCount = ui->fieldTableWidget->item(row, 3)->text().toInt();
+#ifdef ENABLE_DEBUG
+            qDebug() << "[MainWindow] Selected field:" << row << "name:" << fields[row].name << "count:" << selectedFieldCount;
+#endif
             break;
         }
     }
+    
+    if (selectedField == -1) {
+#ifdef ENABLE_DEBUG
+        qWarning() << "[MainWindow] WARNING: No field selected! Please check a field in the table.";
+#endif
+    }
+    
     if (selectedField >= 0 && selectedFieldCount > 1) {
         selectedArrayIndex = ui->arrayIndexSpinBox->value();
     }
     bool endianness = ui->endiannessCheckBox->isChecked();
+#ifdef ENABLE_DEBUG
+    qDebug() << "[MainWindow] Config: structSize=" << structSize << "selectedField=" << selectedField << "endianness=" << endianness;
+#endif
     emit updateUdpConfig(structText, fields, structSize, endianness, selectedField, selectedArrayIndex, selectedFieldCount);
 }
 
@@ -623,13 +664,17 @@ void MainWindow::handleUdpData(QVector<float> values) {
         }
     }
     if (selectedField == -1) {
-        if (ui->debugLogCheckBox->isChecked()) qDebug() << "[handleUdpData] No field selected, clearing plot.";
+#ifdef ENABLE_DEBUG
+        qDebug() << "[handleUdpData] No field selected, clearing plot.";
+#endif
         valueHistory.clear();
         auto *series = static_cast<QLineSeries*>(ui->chartView->chart()->series().at(0));
         series->clear();
         return;
     }
-    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[handleUdpData] Received values for field" << selectedField << ":" << values;
+    #ifdef ENABLE_DEBUG
+        qDebug() << "[handleUdpData] Received values for field" << selectedField << ":" << values;
+#endif
 
     if (ui->applyFftCheckBox->isChecked()) {
         // FFT mode: fill fftBuffer and process when enough samples are collected
@@ -644,8 +689,11 @@ void MainWindow::handleUdpData(QVector<float> values) {
     }
 
     // Time-domain mode (existing code)
+    // For high-rate data, limit the number of points to prevent memory issues
+    const int maxPoints = std::min(xDiv, 10000); // Cap at 10k points for high-rate data
+    
     for (float value : values) {
-        if (valueHistory.size() >= xDiv) valueHistory.pop_front();
+        if (valueHistory.size() >= maxPoints) valueHistory.pop_front();
         valueHistory.append(QPointF(sampleIndex++, value));
     }
     // Do not call updatePlot() here; let plotUpdateTimer control refresh
@@ -663,7 +711,7 @@ QJsonObject MainWindow::collectPreset() const {
     preset["y_div"] = ui->yDivSlider->value();
     preset["refresh_rate"] = ui->refreshRateSpinBox->value();
     preset["endianness"] = ui->endiannessCheckBox->isChecked();
-    preset["debug_log"] = ui->debugLogCheckBox->isChecked();
+            // Debug logging is now controlled by ENABLE_DEBUG macro
     preset["auto_scale_y"] = ui->autoScaleYCheckBox->isChecked();
     preset["selected_field"] = ui->fieldTableWidget->currentRow();
     preset["array_index"] = ui->arrayIndexSpinBox->value();
@@ -682,7 +730,7 @@ void MainWindow::applyPreset(const QJsonObject &preset) {
     if (preset.contains("y_div")) ui->yDivSlider->setValue(preset["y_div"].toInt());
     if (preset.contains("refresh_rate")) ui->refreshRateSpinBox->setValue(preset["refresh_rate"].toInt());
     if (preset.contains("endianness")) ui->endiannessCheckBox->setChecked(preset["endianness"].toBool());
-    if (preset.contains("debug_log")) ui->debugLogCheckBox->setChecked(preset["debug_log"].toBool());
+            // Debug logging is now controlled by ENABLE_DEBUG macro
     if (preset.contains("auto_scale_y")) ui->autoScaleYCheckBox->setChecked(preset["auto_scale_y"].toBool());
     if (preset.contains("selected_field")) {
         int row = preset["selected_field"].toInt();
@@ -909,7 +957,9 @@ void MainWindow::updateCustomCommandsUI() {
             form->addRow(label, rowWidget);
             // Connect setBtn to send the command
             connect(setBtn, &QPushButton::clicked, this, [this, cmd, spin, valueSize]() {
-                qDebug() << "Custom spinbox Set button pressed for" << cmd["name"].toString();
+        #ifdef ENABLE_DEBUG
+        qDebug() << "Custom spinbox Set button pressed for" << cmd["name"].toString();
+#endif
                 QByteArray ba;
                 // Header
                 bool ok = false;
@@ -935,9 +985,11 @@ void MainWindow::updateCustomCommandsUI() {
                 QHostAddress addr(ui->ipLineEdit->text());
                 quint16 port = static_cast<quint16>(ui->portSpinBox->value());
                 if (!addr.isNull()) {
-                    qDebug() << "daqAddress:" << addr << "daqPort:" << port;
-                    qDebug() << "Custom spinbox command send:" << ba.toHex();
-                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[MainWindow] Emitting sendCustomDatagram" << ba.toHex() << addr << port;
+                    #ifdef ENABLE_DEBUG
+        qDebug() << "daqAddress:" << addr << "daqPort:" << port;
+        qDebug() << "Custom spinbox command send:" << ba.toHex();
+        qDebug() << "[MainWindow] Emitting sendCustomDatagram" << ba.toHex() << addr << port;
+#endif
                     emit sendCustomDatagram(ba, addr, port);
                 }
             });
@@ -945,7 +997,9 @@ void MainWindow::updateCustomCommandsUI() {
             QPushButton *sendBtn = new QPushButton("Send", group);
             form->addRow(label, sendBtn);
             connect(sendBtn, &QPushButton::clicked, this, [this, cmd]() {
-                qDebug() << "Custom Send button pressed for" << cmd["name"].toString();
+        #ifdef ENABLE_DEBUG
+        qDebug() << "Custom Send button pressed for" << cmd["name"].toString();
+#endif
                 QByteArray ba;
                 QString val = cmd["command"].toString();
                 if (val.startsWith("0x")) {
@@ -959,9 +1013,11 @@ void MainWindow::updateCustomCommandsUI() {
                 QHostAddress addr(ui->ipLineEdit->text());
                 quint16 port = static_cast<quint16>(ui->portSpinBox->value());
                 if (!addr.isNull()) {
+#ifdef ENABLE_DEBUG
                     qDebug() << "daqAddress:" << addr << "daqPort:" << port;
                     qDebug() << "Custom button command send:" << ba.toHex();
-                    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[MainWindow] Emitting sendCustomDatagram" << ba.toHex() << addr << port;
+                    qDebug() << "[MainWindow] Emitting sendCustomDatagram" << ba.toHex() << addr << port;
+#endif
                     emit sendCustomDatagram(ba, addr, port);
                 }
             });
@@ -1020,6 +1076,13 @@ void MainWindow::on_logToCsvButton_clicked() {
         Q_ARG(int, structSize),
         Q_ARG(int, duration),
         Q_ARG(QString, filename));
+    
+    // Enable binary logging mode if checkbox is checked
+    if (ui->binaryLoggingCheckBox->isChecked()) {
+        QMetaObject::invokeMethod(udpWorker, "enableBinaryLogging", Qt::QueuedConnection,
+            Q_ARG(bool, true));
+        ui->statusbar->showMessage("Binary logging started - maximum performance mode", 0);
+    }
     connect(udpWorker, &UdpWorker::loggingFinished, this, [this]() {
         for (auto w : findChildren<QWidget*>()) w->setEnabled(true);
         ui->logToCsvButton->setEnabled(true);
@@ -1032,6 +1095,20 @@ void MainWindow::on_logToCsvButton_clicked() {
         for (auto w : findChildren<QWidget*>()) w->setEnabled(true);
         ui->logToCsvButton->setEnabled(true);
     });
+}
+
+void MainWindow::on_binaryLoggingCheckBox_toggled(bool checked) {
+    if (checked) {
+        ui->statusbar->showMessage("Binary logging enabled - maximum performance mode", 3000);
+#ifdef ENABLE_DEBUG
+        qDebug() << "[MainWindow] Binary logging mode enabled";
+#endif
+    } else {
+        ui->statusbar->showMessage("Binary logging disabled - CSV mode", 3000);
+#ifdef ENABLE_DEBUG
+        qDebug() << "[MainWindow] Binary logging mode disabled";
+#endif
+    }
 }
 
 void MainWindow::on_arrayIndexSpinBox_valueChanged(int value)
@@ -1066,7 +1143,9 @@ void MainWindow::on_arrayIndexSpinBox_valueChanged(int value)
         selectedArrayIndex = value;
     }
     bool endianness = ui->endiannessCheckBox->isChecked();
-    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[UI] updateUdpConfig (arrayIndex changed):" << structText << structSize << endianness << selectedField << selectedArrayIndex << selectedFieldCount;
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UI] updateUdpConfig (arrayIndex changed):" << structText << structSize << endianness << selectedField << selectedArrayIndex << selectedFieldCount;
+#endif
     emit updateUdpConfig(structText, fields, structSize, endianness, selectedField, selectedArrayIndex, selectedFieldCount);
     if (selectedField == -1) {
         valueHistory.clear();
@@ -1106,12 +1185,12 @@ void MainWindow::on_endiannessCheckBox_toggled(bool checked) {
         selectedArrayIndex = ui->arrayIndexSpinBox->value();
     }
     bool endianness = checked;
-    if (ui->debugLogCheckBox->isChecked()) qDebug() << "[UI] updateUdpConfig (endianness changed):" << structText << structSize << endianness << selectedField << selectedArrayIndex << selectedFieldCount;
+#ifdef ENABLE_DEBUG
+    qDebug() << "[UI] updateUdpConfig (endianness changed):" << structText << structSize << endianness << selectedField << selectedArrayIndex << selectedFieldCount;
+#endif
     emit updateUdpConfig(structText, fields, structSize, endianness, selectedField, selectedArrayIndex, selectedFieldCount);
 }
 
-bool MainWindow::debugLogEnabled = false;
-void MainWindow::setDebugLogEnabled(bool enabled) {
-    debugLogEnabled = enabled;
-}
+// Debug logging is now controlled by ENABLE_DEBUG macro
+// Debug logging is now controlled by ENABLE_DEBUG macro
 
