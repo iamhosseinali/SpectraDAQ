@@ -1,7 +1,7 @@
-# SpectraDAQ - High-Performance UDP Data Acquisition Monitor
+# SpectraDAQ - UDP Data Acquisition Monitor
 
 ## Overview
-SpectraDAQ is a Qt-based real-time data acquisition monitor designed for high-throughput UDP packet processing. The application implements zero-copy data handling, lock-free ring buffers, and binary logging for maximum performance at data rates up to 1 Gbps.
+SpectraDAQ is a Qt-based vibe coded real-time data acquisition monitor designed for UDP packet processing. The application implements zero-copy data handling, lock-free ring buffers, and binary logging for maximum performance.
 
 ## Core Architecture
 
@@ -44,18 +44,6 @@ SpectraDAQ is a Qt-based real-time data acquisition monitor designed for high-th
 - Buffered writes with configurable batch sizes
 
 ## Binary Logging Protocol
-
-### File Format
-```
-Header (16 bytes):
-- Magic: 0x12345678 (4 bytes)
-- Packet count: uint32_t (4 bytes)
-- Struct size: uint32_t (4 bytes)
-- Field count: uint32_t (4 bytes)
-
-Data:
-- Raw struct data (packet_count × struct_size bytes)
-```
 
 ### Conversion Process
 - Header validation and metadata extraction
@@ -104,7 +92,7 @@ make clean && make
 
 ## Usage Workflow
 
-### High-Rate Data Capture
+### Data Capture
 1. Define C struct in UI
 2. Enable binary logging checkbox
 3. Set logging duration and filename
@@ -118,20 +106,6 @@ make clean && make
 - Socket buffer size validation
 
 ## Technical Specifications
-
-### Performance Targets
-- UDP throughput: 1 Gbps sustained
-- Packet processing: 100,000+ packets/sec
-- Memory usage: <100MB for 1GB data
-- UI responsiveness: 30 FPS plotting
-
-### System Requirements
-- CPU: Multi-core recommended
-- RAM: 4GB minimum, 8GB recommended
-- Storage: SSD for high-rate logging
-- Network: Gigabit Ethernet interface
-
-## Debug System
 
 ### Console Output Control
 - Debug output controlled by ENABLE_DEBUG macro
